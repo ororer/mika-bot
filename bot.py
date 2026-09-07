@@ -21,12 +21,13 @@ try:
     bot_user = bot.get_me()
     BOT_USERNAME = bot_user.username.lower() if bot_user.username else ""
     BOT_ID = bot_user.id
-    print(f"[Bot Init] מחובר בהצלחה: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
+    print(f"[Bot Init] מחובר: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
 except Exception as e:
     print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
 MARKET_CACHE = {}
 CACHE_TTL = 300
+PROCESSED_MESSAGES = set()
 
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
@@ -36,7 +37,8 @@ HEBREW_TICKERS = {
     "גוגל": "GOOGL",
     "מיקרוסופט": "MSFT",
     "מייקרוסופט": "MSFT",
-    "מטא": "META"
+    "מטא": "META",
+    "מיקרון": "MU"
 }
 
 def run_health_server():
@@ -63,17 +65,14 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # 1. חיפוש מניה בעברית
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in clean_text:
             return ticker
 
-    # 2. חיפוש טיקר עם $ (למשל: $NVDA)
     cashtag = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtag:
         return cashtag[0].upper()
 
-    # 3. מילים באנגלית תוך סינון מילות דיבור נפוצות
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
@@ -123,21 +122,19 @@ def analyze_and_format(ticker_symbol: str) -> str:
     except Exception as e:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
-@bot.message_handler(commands=['start', 'help'])
-@bot.channel_post_handler(commands=['start', 'help'])
-def send_welcome(message):
-    bot.reply_to(
-        message,
-        "אהלן! אני צ'יפ 🤖📊\n"
-        "הסיידקיק שלכם לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
-        "מה אפשר לעשות איתי?\n"
-        "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', '$TSLA')\n"
-        "• דברו איתי חופשי: תייגו אותי, כתבו 'צ'יפ' או השיבו להודעה שלי!"
-    )
+def process_incoming_message(message):
+    # סינון הודעות שטלגרם משכפל אוטומטית מהערוץ לקבוצת התגובות
+    if getattr(message, 'is_automatic_forward', False):
+        return
 
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-@bot.channel_post_handler(func=lambda message: True, content_types=['text'])
-def handle_all_messages(message):
+    # מניעת עיבוד כפול
+    msg_key = f"{message.chat.id}_{message.message_id}"
+    if msg_key in PROCESSED_MESSAGES:
+        return
+    PROCESSED_MESSAGES.add(msg_key)
+    if len(PROCESSED_MESSAGES) > 500:
+        PROCESSED_MESSAGES.clear()
+
     raw_text = message.text or message.caption or ""
     user_text = raw_text.strip()
     if not user_text:
@@ -145,12 +142,9 @@ def handle_all_messages(message):
 
     chat_type = message.chat.type
     chat_id = message.chat.id
-    print(f"[Debug Incoming] הצ'אט: {chat_id} ({chat_type}) | הודעה: '{user_text}'", flush=True)
-
     normalized = normalize_text(user_text)
     is_private = (chat_type == 'private')
 
-    # בדיקת תשובה לבוט
     is_reply_to_bot = False
     if message.reply_to_message and message.reply_to_message.from_user:
         rep_id = message.reply_to_message.from_user.id
@@ -158,7 +152,6 @@ def handle_all_messages(message):
         if rep_id == BOT_ID or (BOT_USERNAME and rep_user == BOT_USERNAME):
             is_reply_to_bot = True
 
-    # בדיקת תיוג או שם
     is_mentioned = False
     if BOT_USERNAME and f"@{BOT_USERNAME}" in normalized.lower():
         is_mentioned = True
@@ -167,26 +160,19 @@ def handle_all_messages(message):
 
     ticker = extract_ticker(user_text)
 
-    print(f"[Debug Checks] פרטי: {is_private} | ריפליי: {is_reply_to_bot} | מתוייג: {is_mentioned} | מניה: {ticker}", flush=True)
-
-    # אם זו קבוצה או ערוץ, וההודעה אינה פנייה אליו
+    # סינון הודעות כלליות בקבוצה שאינן פנייה מפורשת לבוט
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
-        print("[Debug Skipped] ההודעה לא מיועדת לבוט. דילוג.", flush=True)
         return
 
     try:
-        # ערוצים לא תמיד תומכים ב'מקליד...', אז נעטוף את זה ב-try
         bot.send_chat_action(chat_id, 'typing')
-    except Exception as e:
-        print(f"[Debug Error Action] {e}", flush=True)
+    except Exception:
+        pass
 
-    # הפקת מענה
     try:
         if ticker:
-            print(f"[Debug Route] ניתוח מניה עבור {ticker}", flush=True)
             reply = analyze_and_format(ticker)
         else:
-            print("[Debug Route] שיחת מנטור AI חופשית", flush=True)
             clean_text = normalized
             if BOT_USERNAME:
                 clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
@@ -194,14 +180,16 @@ def handle_all_messages(message):
             reply = get_mentor_chat_reply(clean_text or normalized)
 
         bot.reply_to(message, reply)
-        print("[Debug Success] תשובה נשלחה בהצלחה!", flush=True)
     except Exception as e:
-        err_msg = f"אירעה שגיאה בעיבוד ההודעה: {e}"
-        print(f"[Debug Exception] {err_msg}", flush=True)
-        try:
-            bot.reply_to(message, err_msg)
-        except Exception:
-            pass
+        print(f"[Handler Error] {e}", flush=True)
+
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_text_messages(message):
+    process_incoming_message(message)
+
+@bot.channel_post_handler(func=lambda message: True, content_types=['text'])
+def handle_channel_posts(message):
+    process_incoming_message(message)
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
