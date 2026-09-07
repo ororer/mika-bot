@@ -15,7 +15,6 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# מטמון בזיכרון לשמירת ניתוח של מניה למשך 5 דקות
 MARKET_CACHE = {}
 CACHE_TTL = 300
 
@@ -26,6 +25,7 @@ HEBREW_TICKERS = {
     "אמזון": "AMZN",
     "גוגל": "GOOGL",
     "מיקרוסופט": "MSFT",
+    "מייקרוסופט": "MSFT",
     "מטא": "META"
 }
 
@@ -35,7 +35,7 @@ def run_health_server():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Chip is alive and fast!")
+            self.wfile.write(b"Chip is operational!")
         def log_message(self, format, *args):
             pass
 
@@ -48,7 +48,7 @@ def extract_ticker(text: str):
             return ticker
 
     words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
-    ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP"}
+    ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP", "WHAT"}
     for word in words:
         if word not in ignored:
             return word
@@ -56,7 +56,6 @@ def extract_ticker(text: str):
 
 def analyze_and_format(ticker_symbol: str) -> str:
     now = time.time()
-    # בדיקה האם המניה נבדקה ב-5 הדקות האחרונות
     if ticker_symbol in MARKET_CACHE:
         cached = MARKET_CACHE[ticker_symbol]
         if now - cached["time"] < CACHE_TTL:
@@ -64,11 +63,10 @@ def analyze_and_format(ticker_symbol: str) -> str:
 
     try:
         ticker = yf.Ticker(ticker_symbol)
-        # משיכת 250 ימי מסחר בלבד במקום שנה שלמה
         df = ticker.history(period="250d", interval="1d")
 
         if df.empty or len(df) < 155:
-            return f"לא מצאתי מספיק נתונים על {ticker_symbol}. תוודא שזה טיקר אמריקאי תקין."
+            return f"לא מצאתי מספיק נתונים על {ticker_symbol}. תוודא שזה טיקר תקין."
 
         engine = PlaybookEngine(df)
         result = engine.evaluate()
@@ -81,14 +79,13 @@ def analyze_and_format(ticker_symbol: str) -> str:
         mentor_text = get_mentor_analysis(ticker_symbol, result, last_price, rsi, sma150)
 
         formatted_reply = (
-            f"📊 *צ'יפ בודק את {ticker_symbol}:*\n"
+            f"📊 צ'יפ בודק את {ticker_symbol}:\n"
             f"מחיר נוכחי: {last_price:.2f}$ | ממוצע 150: {sma150:.2f}$ | RSI: {rsi:.1f}\n"
-            f"החלטת מנוע: *{result.get('status')}*\n\n"
-            f"💡 *מה צ'יפ אומר:*\n"
+            f"החלטת מנוע: {result.get('status')}\n\n"
+            f"💡 דבר המנטור:\n"
             f"{mentor_text}"
         )
 
-        # שמירה במטמון
         MARKET_CACHE[ticker_symbol] = {"time": now, "result": formatted_reply}
         return formatted_reply
     except Exception as e:
@@ -100,9 +97,9 @@ def send_welcome(message):
         message,
         "אהלן! אני צ'יפ 🤖📊\n"
         "הסיידקיק שלך לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
-        "מה אפשר לעשות איתי?\n"
-        "• שלח לי טיקר (NVDA, TSLA, או 'טסלה') ואבדוק את הגרף.\n"
-        "• שאל שאלות כלליות על השוק והאסטרטגיה."
+        "מה אפשר לעשות?\n"
+        "• שלח לי שם מניה (כמו: 'מה עם מייקרוסופט?', 'NVDA', 'טסלה')\n"
+        "• שאל שאלות חופשיות על ניהול סיכונים ואסטרטגיה."
     )
 
 @bot.message_handler(func=lambda message: True)
@@ -112,17 +109,14 @@ def handle_all_messages(message):
 
     bot.send_chat_action(message.chat.id, 'typing')
 
-    if ticker and len(user_text.split()) <= 4:
+    if ticker:
         reply = analyze_and_format(ticker)
     else:
         reply = get_mentor_chat_reply(user_text)
 
-    try:
-        bot.reply_to(message, reply, parse_mode="Markdown")
-    except Exception:
-        bot.reply_to(message, reply)
+    bot.reply_to(message, reply)
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("...צ'יפ (המהיר) מחובר ומאזין בטלגרם", flush=True)
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    print("...צ'יפ מחובר ומאזין בטלגרם", flush=True)
+    bot.infinity_polling(timeout=15, long_polling_timeout=10)
