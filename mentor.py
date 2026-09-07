@@ -17,29 +17,37 @@ CHIP_SYSTEM_INSTRUCTION = (
     "ענה תמיד בעברית שוטפת, קולחת וטבעית."
 )
 
+MODELS = [
+    "gemini-3.6-flash",
+    "gemini-2.5-flash",
+    "gemini-flash-latest"
+]
+
 def _call_gemini(prompt_text: str) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        print("[שגיאה]: חסר GEMINI_API_KEY", flush=True)
         return "שגיאה: חסר GEMINI_API_KEY."
 
     client = genai.Client(api_key=api_key)
-    
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                system_instruction=CHIP_SYSTEM_INSTRUCTION,
-                temperature=0.7
-            )
-        )
-        if response and response.text:
-            return response.text
-    except Exception as e:
-        print(f"[שגיאה במודל gemini-3.6-flash]: {e}", flush=True)
+    config = types.GenerateContentConfig(
+        system_instruction=CHIP_SYSTEM_INSTRUCTION,
+        temperature=0.7
+    )
 
-    return "סורי, יש בעיה זמנית בקבלת הניתוח. נסה שוב עוד רגע."
+    for model_name in MODELS:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_text,
+                config=config
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            print(f"[שגיאה במודל {model_name}]: {e}", flush=True)
+            continue
+
+    return "סורי, יש כרגע עומס כללי בשרתי גוגל (503). תן לי דקה ונסה שוב."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
