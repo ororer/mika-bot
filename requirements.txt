@@ -1,6 +1,6 @@
+pyTelegramBotAPI
+yfinance
 pandas
 numpy
-yfinance
-requests
-google-genai
-pyTelegramBotAPI
+google-generativeai
+pytz
