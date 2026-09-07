@@ -124,6 +124,7 @@ def analyze_and_format(ticker_symbol: str) -> str:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
 @bot.message_handler(commands=['start', 'help'])
+@bot.channel_post_handler(commands=['start', 'help'])
 def send_welcome(message):
     bot.reply_to(
         message,
@@ -135,6 +136,7 @@ def send_welcome(message):
     )
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
+@bot.channel_post_handler(func=lambda message: True, content_types=['text'])
 def handle_all_messages(message):
     raw_text = message.text or message.caption or ""
     user_text = raw_text.strip()
@@ -167,12 +169,13 @@ def handle_all_messages(message):
 
     print(f"[Debug Checks] פרטי: {is_private} | ריפליי: {is_reply_to_bot} | מתוייג: {is_mentioned} | מניה: {ticker}", flush=True)
 
-    # אם זו קבוצה וההודעה אינה פנייה אליו
+    # אם זו קבוצה או ערוץ, וההודעה אינה פנייה אליו
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
         print("[Debug Skipped] ההודעה לא מיועדת לבוט. דילוג.", flush=True)
         return
 
     try:
+        # ערוצים לא תמיד תומכים ב'מקליד...', אז נעטוף את זה ב-try
         bot.send_chat_action(chat_id, 'typing')
     except Exception as e:
         print(f"[Debug Error Action] {e}", flush=True)
@@ -202,5 +205,5 @@ def handle_all_messages(message):
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות)", flush=True)
+    print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות + ערוצים)", flush=True)
     bot.infinity_polling(timeout=20, long_polling_timeout=15)
