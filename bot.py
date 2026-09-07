@@ -53,16 +53,29 @@ def run_health_server():
         httpd.serve_forever()
 
 def extract_ticker(text: str):
+    # הסרת תיוג הבוט מהטקסט כדי שלא ייחשב בטעות כטיקר
+    clean_text = text
+    if BOT_USERNAME:
+        clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
+
     # 1. חיפוש שם מניה בעברית
     for heb_name, ticker in HEBREW_TICKERS.items():
-        if heb_name in text:
+        if heb_name in clean_text:
             return ticker
 
-    # 2. חיפוש טיקר באנגלית (1 עד 5 אותיות)
-    words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
-    ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP", "WHAT"}
-    if BOT_USERNAME:
-        ignored.add(BOT_USERNAME.upper())
+    # 2. חיפוש טיקר מובהק עם סימן דולר (למשל: $NVDA או $AAPL)
+    cashtag = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
+    if cashtag:
+        return cashtag[0].upper()
+
+    # 3. חיפוש טיקר באנגלית (1 עד 5 אותיות בלבד) תוך התעלמות ממילים נפוצות
+    words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
+    ignored = {
+        "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
+        "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP"
+    }
 
     for word in words:
         if word not in ignored:
@@ -113,7 +126,7 @@ def send_welcome(message):
         "אהלן! אני צ'יפ 🤖📊\n"
         "הסיידקיק שלכם לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
         "מה אפשר לעשות איתי?\n"
-        "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', 'טסלה')\n"
+        "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', '$TSLA')\n"
         "• בקבוצה: תייגו אותי או השיבו להודעה שלי בכל שאלה שתרצו!"
     )
 
@@ -124,14 +137,13 @@ def handle_all_messages(message):
         return
 
     chat_type = message.chat.type  # 'private', 'group', 'supergroup'
-    ticker = extract_ticker(user_text)
-
+    
     # בדיקה האם ההודעה מיועדת לבוט
     is_private = (chat_type == 'private')
     is_reply_to_bot = (
         message.reply_to_message and 
         message.reply_to_message.from_user and 
-        message.reply_to_message.from_user.is_bot
+        message.reply_to_message.from_user.id == bot.get_me().id
     )
     is_mentioned = (
         (BOT_USERNAME and f"@{BOT_USERNAME}" in user_text.lower()) or 
@@ -139,17 +151,22 @@ def handle_all_messages(message):
         ("ציפ" in user_text)
     )
 
-    # אם זו קבוצה ולא מדובר במניה, בתיוג או בריפליי לבוט - לא מתערבים בשיחה
+    ticker = extract_ticker(user_text)
+
+    # בקבוצה: מגיב אך ורק אם מדובר בשיחה פרטית, תיוג, ריפליי לבוט, או טיקר מפורש
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
         return
 
-    bot.send_chat_action(message.chat.id, 'typing')
+    try:
+        bot.send_chat_action(message.chat.id, 'typing')
+    except Exception:
+        pass
 
     # אם זוהה טיקר/מניה – ניתוח טכני לפי הפלייבוק
     if ticker:
         reply = analyze_and_format(ticker)
     else:
-        # ניקוי שם הבוט מהשאלה לצורך תשובת ה-AI
+        # ניקוי שם הבוט מהשאלה לצורך שיחת AI חופשית
         clean_text = user_text
         if BOT_USERNAME:
             clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
