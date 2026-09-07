@@ -1,5 +1,4 @@
 import os
-import sys
 from google import genai
 from google.genai import types
 
@@ -26,27 +25,21 @@ def _call_gemini(prompt_text: str) -> str:
 
     client = genai.Client(api_key=api_key)
     
-    # שימוש ישיר במודלים רשמיים וקיימים
-    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash"]
-    
-    for model_name in models_to_try:
-        try:
-            print(f"[Chip] שולח בקשה למודל: {model_name}...", flush=True)
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=CHIP_SYSTEM_INSTRUCTION,
-                    temperature=0.7
-                )
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=CHIP_SYSTEM_INSTRUCTION,
+                temperature=0.7
             )
-            if response and response.text:
-                print(f"[Chip] התקבלה תשובה בהצלחה מ-{model_name}", flush=True)
-                return response.text
-        except Exception as e:
-            print(f"[שגיאה במודל {model_name}]: {e}", flush=True)
+        )
+        if response and response.text:
+            return response.text
+    except Exception as e:
+        print(f"[שגיאה במודל gemini-3.6-flash]: {e}", flush=True)
 
-    return "סורי, יש בעיה בחיבור לג'מיני. בדוק את ה-API Key או הלוגים."
+    return "סורי, יש בעיה זמנית בקבלת הניתוח. נסה שוב עוד רגע."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
