@@ -1,7 +1,7 @@
 name: Run Playbook Engine
 
 on:
-  workflow_dispatch:  # מאפשר הרצה ידנית מתוך כפתור באתר GitHub
+  workflow_dispatch:
 
 jobs:
   run-script:
@@ -17,7 +17,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m __main__ --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run main script
