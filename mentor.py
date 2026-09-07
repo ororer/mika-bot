@@ -4,7 +4,7 @@ from google import genai
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return "שגיאה: מפתח GEMINI_API_KEY אינו מוגדר."
+        return "שגיאה: משתנה הסביבה GEMINI_API_KEY אינו מוגדר."
 
     client = genai.Client(api_key=api_key)
 
@@ -33,10 +33,27 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
 תן את חוות הדעת שלך על הגרף ב-2 עד 3 פסקאות קצרות וממוקדות.
 """
 
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=user_prompt,
-        config={"system_instruction": system_instruction}
-    )
+    # סדר עדיפויות של מודלים יציבים
+    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
 
-    return response.text
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config={"system_instruction": system_instruction}
+            )
+            if response and response.text:
+                return response.text
+        except Exception as e:
+            print(f"[דיבוג] ניסיון עבור {model_name} נכשל: {e}")
+            continue
+
+    # במקרה שכל המודלים נכשלו - הדפסת המודלים שקיימים בפועל במפתח
+    try:
+        models_list = [m.name for m in client.models.list()]
+        print(f"[דיבוג] רשימת מודלים זמינים במפתח שלך: {models_list}")
+    except Exception as list_err:
+        print(f"[דיבוג] שגיאה בשליפת רשימת מודלים: {list_err}")
+
+    return "שגיאה: לא התקבל מענה מאף אחד ממודלי Gemini הזמינים."
