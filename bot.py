@@ -15,6 +15,16 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# שמירת שם המשתמש של הבוט כדי לזהות תיוגים בקבוצה
+BOT_USERNAME = ""
+try:
+    bot_user = bot.get_me()
+    BOT_USERNAME = bot_user.username.lower() if bot_user.username else ""
+    print(f"[Bot Init] הבוט מחובר תחת המשתמש: @{BOT_USERNAME}", flush=True)
+except Exception as e:
+    print(f"[Bot Init] לא הצלחתי למשוך שם משתמש: {e}", flush=True)
+
+# מטמון בזיכרון למשך 5 דקות לחיסכון בזמן
 MARKET_CACHE = {}
 CACHE_TTL = 300
 
@@ -35,7 +45,7 @@ def run_health_server():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Chip is operational!")
+            self.wfile.write(b"Chip is listening 24/7!")
         def log_message(self, format, *args):
             pass
 
@@ -43,12 +53,17 @@ def run_health_server():
         httpd.serve_forever()
 
 def extract_ticker(text: str):
+    # 1. חיפוש שם מניה בעברית
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in text:
             return ticker
 
+    # 2. חיפוש טיקר באנגלית (1 עד 5 אותיות)
     words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
     ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP", "WHAT"}
+    if BOT_USERNAME:
+        ignored.add(BOT_USERNAME.upper())
+
     for word in words:
         if word not in ignored:
             return word
@@ -96,27 +111,55 @@ def send_welcome(message):
     bot.reply_to(
         message,
         "אהלן! אני צ'יפ 🤖📊\n"
-        "הסיידקיק שלך לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
-        "מה אפשר לעשות?\n"
-        "• שלח לי שם מניה (כמו: 'מה עם מייקרוסופט?', 'NVDA', 'טסלה')\n"
-        "• שאל שאלות חופשיות על ניהול סיכונים ואסטרטגיה."
+        "הסיידקיק שלכם לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
+        "מה אפשר לעשות איתי?\n"
+        "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', 'טסלה')\n"
+        "• בקבוצה: תייגו אותי או השיבו להודעה שלי בכל שאלה שתרצו!"
     )
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
-    user_text = message.text.strip()
+    user_text = message.text.strip() if message.text else ""
+    if not user_text:
+        return
+
+    chat_type = message.chat.type  # 'private', 'group', 'supergroup'
     ticker = extract_ticker(user_text)
+
+    # בדיקה האם ההודעה מיועדת לבוט
+    is_private = (chat_type == 'private')
+    is_reply_to_bot = (
+        message.reply_to_message and 
+        message.reply_to_message.from_user and 
+        message.reply_to_message.from_user.is_bot
+    )
+    is_mentioned = (
+        (BOT_USERNAME and f"@{BOT_USERNAME}" in user_text.lower()) or 
+        ("צ'יפ" in user_text) or 
+        ("ציפ" in user_text)
+    )
+
+    # אם זו קבוצה ולא מדובר במניה, בתיוג או בריפליי לבוט - לא מתערבים בשיחה
+    if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
+        return
 
     bot.send_chat_action(message.chat.id, 'typing')
 
+    # אם זוהה טיקר/מניה – ניתוח טכני לפי הפלייבוק
     if ticker:
         reply = analyze_and_format(ticker)
     else:
-        reply = get_mentor_chat_reply(user_text)
+        # ניקוי שם הבוט מהשאלה לצורך תשובת ה-AI
+        clean_text = user_text
+        if BOT_USERNAME:
+            clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r"\b(צ'יפ|ציפ)\b", "", clean_text).strip()
+        
+        reply = get_mentor_chat_reply(clean_text or user_text)
 
     bot.reply_to(message, reply)
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("...צ'יפ מחובר ומאזין בטלגרם", flush=True)
+    print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות)", flush=True)
     bot.infinity_polling(timeout=15, long_polling_timeout=10)
