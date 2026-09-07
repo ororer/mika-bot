@@ -1,4 +1,5 @@
 import os
+import time
 from google import genai
 from google.genai import types
 
@@ -14,45 +15,64 @@ CHIP_SYSTEM_INSTRUCTION = (
     "4. חובת סטופ-לוס מוגדר ושפל ברור (Tradeable Bottom). ניהול סיכונים קפדני (1%-2% סיכון מהתיק).\n"
     "5. המטרה הראשונה: להגן על הכסף. המטרה השנייה: לתפוס מהלכים איכותיים.\n\n"
     "אם שואלים אותך מי אתה או איך קוראים לך, תציג את עצמך בתור צ'יפ (Chip) בשמחה ובקצרה.\n"
-    "ענה תמיד בעברית שוטפת, קולחת וטבעית. תהיה תכליתי, קצר וחד."
+    "ענה תמיד אך ורק בעברית קולחת, טבעית ומלאה. היה תמציתי ומדויק – ללא שימוש באנגלית כלל."
 )
 
 _api_key = os.environ.get("GEMINI_API_KEY")
 _client = genai.Client(api_key=_api_key) if _api_key else None
+_active_model = None
 
-CANDIDATE_MODELS = [
-    "gemini-flash-latest",
-    "gemini-pro-latest",
-    "gemini-3.6-flash"
-]
+def _get_best_model():
+    """מאתר דינמית את מודל ה-Flash התקף ביותר מחשבון הגוגל שלך"""
+    global _active_model
+    if _active_model:
+        return _active_model
+
+    if not _client:
+        return "gemini-2.5-flash"
+
+    try:
+        models = list(_client.models.list())
+        flash_models = [m.name for m in models if "flash" in m.name.lower()]
+        if flash_models:
+            # בוחר את מודל ה-flash הראשון שקיים בחשבון
+            _active_model = flash_models[0]
+            print(f"[Chip AI] נבחר מודל מאומת: {_active_model}", flush=True)
+            return _active_model
+    except Exception as e:
+        print(f"[Chip AI] שגיאה באיתור מודלים: {e}", flush=True)
+
+    _active_model = "gemini-2.5-flash"
+    return _active_model
 
 def _call_gemini(prompt_text: str) -> str:
     if not _client:
         print("[שגיאה]: חסר GEMINI_API_KEY", flush=True)
-        return "שגיאה: חסר GEMINI_API_KEY."
+        return "שגיאה: חסר GEMINI_API_KEY במערכת."
+
+    model_to_use = _get_best_model()
 
     config = types.GenerateContentConfig(
         system_instruction=CHIP_SYSTEM_INSTRUCTION,
         temperature=0.6,
-        max_output_tokens=350
+        max_output_tokens=800
     )
 
-    for model_name in CANDIDATE_MODELS:
+    # עד 3 ניסיונות במקרה של שיהוק 503 ברשת
+    for attempt in range(3):
         try:
-            print(f"[Chip] מנסה מודל: {model_name}...", flush=True)
             response = _client.models.generate_content(
-                model=model_name,
+                model=model_to_use,
                 contents=prompt_text,
                 config=config
             )
             if response and response.text:
-                print(f"[Chip] הצלחה במודל: {model_name}", flush=True)
                 return response.text.strip()
         except Exception as e:
-            print(f"[Chip] שגיאה במודל {model_name}: {e}", flush=True)
-            continue
+            print(f"[Chip Gemini] ניסיון {attempt + 1} במודל {model_to_use} נכשל: {e}", flush=True)
+            time.sleep(1.5)
 
-    return "כרגע יש עומס שרתים זמני ב-API. המתן דקה ונסה שוב."
+    return "סורי, יש כרגע עומס קל בשרתי הניתוח של גוגל. תן לי חצי דקה ונסה שוב."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
@@ -65,10 +85,10 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
 - תבנית שזוהתה: {engine_result.get('setup', 'אין')}
 - סטופ-לוס מחושב: {engine_result.get('stop_loss', 'לא רלוונטי')}
 
-תן את חוות הדעת שלך בתור צ'יפ ב-2 פסקאות קצרות, חדות וממוקדות.
+תן את חוות הדעת שלך בתור צ'יפ ב-2 פסקאות קצרות, חדות וממוקדות בעברית בלבד.
 """
     return _call_gemini(prompt)
 
 def get_mentor_chat_reply(user_question: str) -> str:
-    prompt = f"משתמש שואל אותך: {user_question}\nענה לו ישירות כצ'יפ."
+    prompt = f"משתמש שואל אותך: {user_question}\nענה לו ישירות כצ'יפ בעברית מלאה בלבד."
     return _call_gemini(prompt)
