@@ -1,5 +1,4 @@
 import os
-import time
 from google import genai
 from google.genai import types
 
@@ -18,14 +17,19 @@ CHIP_SYSTEM_INSTRUCTION = (
     "ענה תמיד בעברית שוטפת, קולחת וטבעית. תהיה תכליתי, קצר וחד."
 )
 
-# אתחול הלקוח פעם אחת בלבד בעליית המערכת (חוסך Latency בכל הודעה)
 _api_key = os.environ.get("GEMINI_API_KEY")
 _client = genai.Client(api_key=_api_key) if _api_key else None
+
+CANDIDATE_MODELS = [
+    "gemini-flash-latest",
+    "gemini-pro-latest",
+    "gemini-3.6-flash"
+]
 
 def _call_gemini(prompt_text: str) -> str:
     if not _client:
         print("[שגיאה]: חסר GEMINI_API_KEY", flush=True)
-        return "שגיאה: חסר GEMINI_API_KEY במערכת."
+        return "שגיאה: חסר GEMINI_API_KEY."
 
     config = types.GenerateContentConfig(
         system_instruction=CHIP_SYSTEM_INSTRUCTION,
@@ -33,22 +37,22 @@ def _call_gemini(prompt_text: str) -> str:
         max_output_tokens=350
     )
 
-    # ניסיון ישיר למודל היעד עם מנגנון Retry של שנייה אחת בלבד במקרה של עומס 503 רגעי
-    for attempt in range(2):
+    for model_name in CANDIDATE_MODELS:
         try:
+            print(f"[Chip] מנסה מודל: {model_name}...", flush=True)
             response = _client.models.generate_content(
-                model="gemini-3.6-flash",
+                model=model_name,
                 contents=prompt_text,
                 config=config
             )
             if response and response.text:
+                print(f"[Chip] הצלחה במודל: {model_name}", flush=True)
                 return response.text.strip()
         except Exception as e:
-            print(f"[Gemini 3.6 Flash - ניסיון {attempt + 1} נכשל]: {e}", flush=True)
-            if attempt == 0:
-                time.sleep(1)
+            print(f"[Chip] שגיאה במודל {model_name}: {e}", flush=True)
+            continue
 
-    return "סורי, יש עומס רגעי בשרתים של גוגל (503). נסה שוב בעוד חצי דקה."
+    return "כרגע יש עומס שרתים זמני ב-API. המתן דקה ונסה שוב."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
