@@ -7,72 +7,80 @@ class PlaybookEngine:
         self._calculate_indicators()
 
     def _calculate_indicators(self):
-        # ממוצעים נעים פשוטים (SMA)
-        for period in [20, 50, 100, 150, 200]:
-            self.df[f"SMA_{period}"] = self.df["Close"].rolling(window=period).mean()
+        if isinstance(self.df.columns, pd.MultiIndex):
+            self.df.columns = [col[0] for col in self.df.columns]
 
-        # שיפוע SMA 150 (השוואה 5 ימים לאחור)
-        self.df["SMA_150_Slope"] = (self.df["SMA_150"] - self.df["SMA_150"].shift(5)) / 5
+        self.df['SMA_50'] = self.df['Close'].rolling(window=50, min_periods=50).mean()
+        self.df['SMA_150'] = self.df['Close'].rolling(window=150, min_periods=150).mean()
+        self.df['SMA_200'] = self.df['Close'].rolling(window=200, min_periods=200).mean()
 
-        # חישוב RSI 14
-        delta = self.df["Close"].diff()
+        delta = self.df['Close'].diff()
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
-        avg_gain = gain.rolling(window=14).mean()
-        avg_loss = loss.rolling(window=14).mean()
-        rs = avg_gain / avg_loss
-        self.df["RSI_14"] = 100 - (100 / (1 + rs))
 
-        # הגדרת נר פטיש (Hammer)
-        body = abs(self.df["Close"] - self.df["Open"])
-        total_range = self.df["High"] - self.df["Low"]
-        lower_wick = self.df[["Open", "Close"]].min(axis=1) - self.df["Low"]
-        upper_wick = self.df["High"] - self.df[["Open", "Close"]].max(axis=1)
+        avg_gain = gain.rolling(window=14, min_periods=14).mean()
+        avg_loss = loss.rolling(window=14, min_periods=14).mean()
 
-        self.df["Is_Hammer"] = (
-            (lower_wick >= 2 * body) & 
-            (upper_wick <= 0.15 * total_range) & 
-            (self.df[["Open", "Close"]].min(axis=1) >= (self.df["Low"] + 0.6 * total_range))
-        )
+        rs = avg_gain / avg_loss.replace(0, np.nan)
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+        rsi = rsi.fillna(100.0 * (avg_gain > 0))
+        self.df['RSI_14'] = rsi
 
     def evaluate(self) -> dict:
+        if len(self.df) < 155 or pd.isna(self.df['SMA_150'].iloc[-1]):
+            return {
+                "status": "WAIT",
+                "message": "אין מספיק נרות מסחר לחישוב ממוצע 150 מלא.",
+                "setup": "נתונים חסרים",
+                "stop_loss": None
+            }
+
         curr = self.df.iloc[-1]
         prev = self.df.iloc[-2]
 
-        # 1. בדיקת פסילה: סכין נופלת
-        if curr["Close"] < curr["SMA_150"] and curr["SMA_150_Slope"] < 0:
+        close = float(curr['Close'])
+        sma150 = float(curr['SMA_150'])
+        rsi = float(curr['RSI_14']) if not pd.isna(curr['RSI_14']) else 50.0
+
+        if close < sma150:
             return {
-                "status": "REJECTED",
-                "message": "סכין נופלת: המחיר מתחת ל-SMA 150 והממוצע בירידה."
+                "status": "AVOID",
+                "message": "המניה נסחרת מתחת לממוצע נע 150. שום דבר טוב לא קורה מתחת לממוצע 150 – לא נוגעים בסכין נופלת.",
+                "setup": "סכין נופלת",
+                "stop_loss": None
             }
 
-        # 2. בדיקת פסילה: מתיחת יתר (RSI מעל 70)
-        if curr["RSI_14"] > 70:
+        if rsi > 70:
             return {
-                "status": "REJECTED",
-                "message": "RSI מעל 70 - קנייה בפרמיה מוגזמת."
+                "status": "WAIT",
+                "message": "RSI מעל 70 – המניה מתוחה מדי לקנייה חדשה. ממתינים להתכנסות או פולבק, לא רודפים.",
+                "setup": "קניית יתר (Overbought)",
+                "stop_loss": None
             }
 
-        # 3. טריגר: פטיש מאתמול + אישור המשכיות היום
-        if prev["Is_Hammer"] and curr["Close"] > prev["Close"]:
-            return {
-                "status": "BUY_SIGNAL",
-                "setup": "Hammer Follow-Through",
-                "stop_loss": round(float(prev["Low"]), 2),
-                "message": "אושר היפוך פטיש עם יום המשכיות ירוק."
-            }
+        prev_open = float(prev['Open'])
+        prev_close = float(prev['Close'])
+        prev_low = float(prev['Low'])
+        prev_high = float(prev['High'])
+        curr_close = float(curr['Close'])
 
-        # 4. טריגר: קניית ערך סביב SMA 150
-        diff_pct = (curr["Close"] - curr["SMA_150"]) / curr["SMA_150"] * 100
-        if 0 <= diff_pct <= 2.0 and curr["SMA_150_Slope"] >= 0:
+        body = abs(prev_close - prev_open)
+        lower_shadow = min(prev_open, prev_close) - prev_low
+        is_hammer = (prev_close >= prev_open) and (lower_shadow >= 2 * body) and (body > 0)
+        is_confirmed = curr_close > prev_high
+
+        if is_hammer and is_confirmed:
+            stop_loss = prev_low * 0.995
             return {
-                "status": "BUY_SIGNAL",
-                "setup": "SMA 150 Value Bounce",
-                "stop_loss": round(float(curr["SMA_150"] * 0.985), 2),
-                "message": f"המחיר בקרבה של {diff_pct:.2f}% מעל ממוצע 150 עולה."
+                "status": "BUY",
+                "message": "זוהה נר פטיש עם יום אישור המשכיות (Follow-Through) מעל ממוצע 150. סט-אפ איכותי לפי הספר.",
+                "setup": "Hammer + Confirmation",
+                "stop_loss": f"{stop_loss:.2f}$"
             }
 
         return {
             "status": "WAIT",
-            "message": "תנאי סף תקינים, אך אין טריגר כניסה פעיל כרגע."
+            "message": "המניה במגמה חיובית מעל ממוצע 150, אך אין כרגע טריגר היפוך או שפל מוגדר להנחת סטופ-לוס. ממתינים בסבלנות.",
+            "setup": "אין תבנית מובהקת",
+            "stop_loss": None
         }
