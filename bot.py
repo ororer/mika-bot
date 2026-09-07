@@ -1,5 +1,8 @@
 import os
 import re
+import threading
+import http.server
+import socketserver
 import telebot
 import yfinance as yf
 from engine import PlaybookEngine
@@ -11,10 +14,22 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# שרת דופק זעיר ברקע כדי לענות לדרישות השרת של Render
+def run_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    class QuietHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Micha Bot is alive!")
+        def log_message(self, format, *args):
+            pass
+
+    with socketserver.TCPServer(("", port), QuietHandler) as httpd:
+        httpd.serve_forever()
+
 def extract_ticker(text: str):
-    # זיהוי טיקר באנגלית (בין 1 ל-5 אותיות גדולות או אחרי סימן $)
     words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
-    # רשימת מילים נפוצות באנגלית שלא נרצה להחשיב בטעות כטיקר
     ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO"}
     for word in words:
         if word not in ignored:
@@ -63,23 +78,21 @@ def handle_all_messages(message):
     user_text = message.text.strip()
     ticker = extract_ticker(user_text)
 
-    # שליחת אינדיקציה בטלגרם שהבוט "מקליד..."
     bot.send_chat_action(message.chat.id, 'typing')
 
-    # אם זוהה טיקר ספציפי במחרוזת
     if ticker and len(user_text.split()) <= 4:
         reply = analyze_and_format(ticker)
     else:
-        # שאלה כללית על מסחר או פלייבוק
         reply = get_mentor_chat_reply(user_text)
 
-    # שליחת התשובה
     try:
         bot.reply_to(message, reply, parse_mode="Markdown")
     except Exception:
-        # במקרה של תווים שמתנגשים עם Markdown
         bot.reply_to(message, reply)
 
 if __name__ == "__main__":
-    print("מיכה מאזין להודעות בטלגרם...")
+    # הפעלת שרת הדופק בתהליכון נפרד
+    threading.Thread(target=run_health_server, daemon=True).start()
+    
+    print("מיכה מחובר ומאזין להודעות בטלגרם...")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
