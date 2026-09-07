@@ -15,16 +15,16 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# שמירת שם המשתמש של הבוט כדי לזהות תיוגים בקבוצה
 BOT_USERNAME = ""
+BOT_ID = None
 try:
     bot_user = bot.get_me()
     BOT_USERNAME = bot_user.username.lower() if bot_user.username else ""
-    print(f"[Bot Init] הבוט מחובר תחת המשתמש: @{BOT_USERNAME}", flush=True)
+    BOT_ID = bot_user.id
+    print(f"[Bot Init] הבוט מחובר תחת המשתמש: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
 except Exception as e:
-    print(f"[Bot Init] לא הצלחתי למשוך שם משתמש: {e}", flush=True)
+    print(f"[Bot Init] לא הצלחתי למשוך פרטי בוט: {e}", flush=True)
 
-# מטמון בזיכרון למשך 5 דקות לחיסכון בזמן
 MARKET_CACHE = {}
 CACHE_TTL = 300
 
@@ -52,9 +52,12 @@ def run_health_server():
     with socketserver.TCPServer(("", port), QuietHandler) as httpd:
         httpd.serve_forever()
 
+def normalize_text(text: str) -> str:
+    # נרמול כל סוגי הגרשים לגרש סטנדרטי
+    return text.replace("’", "'").replace("`", "'").replace("״", '"')
+
 def extract_ticker(text: str):
-    # הסרת תיוג הבוט מהטקסט כדי שלא ייחשב בטעות כטיקר
-    clean_text = text
+    clean_text = normalize_text(text)
     if BOT_USERNAME:
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
@@ -64,12 +67,12 @@ def extract_ticker(text: str):
         if heb_name in clean_text:
             return ticker
 
-    # 2. חיפוש טיקר מובהק עם סימן דולר (למשל: $NVDA או $AAPL)
+    # 2. חיפוש טיקר עם סימן דולר (למשל: $NVDA)
     cashtag = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtag:
         return cashtag[0].upper()
 
-    # 3. חיפוש טיקר באנגלית (1 עד 5 אותיות בלבד) תוך התעלמות ממילים נפוצות
+    # 3. מילים באנגלית תוך התעלמות ממילות שיחה נפוצות
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
@@ -127,33 +130,38 @@ def send_welcome(message):
         "הסיידקיק שלכם לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
         "מה אפשר לעשות איתי?\n"
         "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', '$TSLA')\n"
-        "• בקבוצה: תייגו אותי או השיבו להודעה שלי בכל שאלה שתרצו!"
+        "• דברו איתי חופשי: תייגו אותי, כתבו 'צ'יפ' או השיבו להודעה שלי!"
     )
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
-    user_text = message.text.strip() if message.text else ""
+    raw_text = message.text or message.caption or ""
+    user_text = raw_text.strip()
     if not user_text:
         return
 
+    normalized = normalize_text(user_text)
     chat_type = message.chat.type  # 'private', 'group', 'supergroup'
-    
-    # בדיקה האם ההודעה מיועדת לבוט
     is_private = (chat_type == 'private')
-    is_reply_to_bot = (
-        message.reply_to_message and 
-        message.reply_to_message.from_user and 
-        message.reply_to_message.from_user.id == bot.get_me().id
-    )
+
+    # בדיקת תשובה לבוט
+    is_reply_to_bot = False
+    if message.reply_to_message:
+        reply_from = message.reply_to_message.from_user
+        if reply_from and (reply_from.id == BOT_ID or (BOT_USERNAME and reply_from.username and reply_from.username.lower() == BOT_USERNAME)):
+            is_reply_to_bot = True
+
+    # בדיקת תיוג או פנייה ישירה לצ'יפ (כולל גרש חכם או רגיל)
     is_mentioned = (
-        (BOT_USERNAME and f"@{BOT_USERNAME}" in user_text.lower()) or 
-        ("צ'יפ" in user_text) or 
-        ("ציפ" in user_text)
+        (BOT_USERNAME and f"@{BOT_USERNAME}" in normalized.lower()) or 
+        ("צ'יפ" in normalized) or 
+        ("ציפ" in normalized) or
+        ("chip" in normalized.lower())
     )
 
     ticker = extract_ticker(user_text)
 
-    # בקבוצה: מגיב אך ורק אם מדובר בשיחה פרטית, תיוג, ריפליי לבוט, או טיקר מפורש
+    # התעלמות אם זו קבוצה וההודעה אינה פנייה לבוט או בקשת מניה
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
         return
 
@@ -162,17 +170,16 @@ def handle_all_messages(message):
     except Exception:
         pass
 
-    # אם זוהה טיקר/מניה – ניתוח טכני לפי הפלייבוק
+    # ניתוח מניה או תשובת שיחה חופשית
     if ticker:
         reply = analyze_and_format(ticker)
     else:
-        # ניקוי שם הבוט מהשאלה לצורך שיחת AI חופשית
-        clean_text = user_text
+        clean_text = normalized
         if BOT_USERNAME:
             clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\b(צ'יפ|ציפ)\b", "", clean_text).strip()
+        clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
         
-        reply = get_mentor_chat_reply(clean_text or user_text)
+        reply = get_mentor_chat_reply(clean_text or normalized)
 
     bot.reply_to(message, reply)
 
