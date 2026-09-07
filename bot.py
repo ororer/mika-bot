@@ -21,7 +21,7 @@ try:
     bot_user = bot.get_me()
     BOT_USERNAME = bot_user.username.lower() if bot_user.username else ""
     BOT_ID = bot_user.id
-    print(f"[Bot Init] מחובר: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
+    print(f"[Bot Init] מחובר בהצלחה: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
 except Exception as e:
     print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
@@ -41,18 +41,21 @@ HEBREW_TICKERS = {
     "מיקרון": "MU"
 }
 
-def run_health_server():
-    port = int(os.environ.get("PORT", 8080))
+def start_health_server():
+    port = int(os.environ.get("PORT", 10000))
     class QuietHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
+            self.send_header("Content-type", "text/plain; charset=utf-8")
             self.end_headers()
             self.wfile.write(b"Chip is listening 24/7!")
         def log_message(self, format, *args):
             pass
 
-    with socketserver.TCPServer(("", port), QuietHandler) as httpd:
-        httpd.serve_forever()
+    server = socketserver.TCPServer(("0.0.0.0", port), QuietHandler)
+    server.allow_reuse_address = True
+    print(f"[Health Server] מאזין על פורט {port}", flush=True)
+    server.serve_forever()
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -123,11 +126,9 @@ def analyze_and_format(ticker_symbol: str) -> str:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
 def process_incoming_message(message):
-    # סינון הודעות שטלגרם משכפל אוטומטית מהערוץ לקבוצת התגובות
     if getattr(message, 'is_automatic_forward', False):
         return
 
-    # מניעת עיבוד כפול
     msg_key = f"{message.chat.id}_{message.message_id}"
     if msg_key in PROCESSED_MESSAGES:
         return
@@ -160,7 +161,6 @@ def process_incoming_message(message):
 
     ticker = extract_ticker(user_text)
 
-    # סינון הודעות כלליות בקבוצה שאינן פנייה מפורשת לבוט
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
         return
 
@@ -192,6 +192,8 @@ def handle_channel_posts(message):
     process_incoming_message(message)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_health_server, daemon=True).start()
+    t = threading.Thread(target=start_health_server, daemon=True)
+    t.start()
+    time.sleep(1)
     print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות + ערוצים)", flush=True)
     bot.infinity_polling(timeout=20, long_polling_timeout=15)
