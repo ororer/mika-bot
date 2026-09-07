@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import threading
 import http.server
 import socketserver
@@ -13,6 +14,10 @@ if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN אינו מוגדר.")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# מטמון בזיכרון לשמירת ניתוח של מניה למשך 5 דקות
+MARKET_CACHE = {}
+CACHE_TTL = 300
 
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
@@ -30,7 +35,7 @@ def run_health_server():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Chip is alive!")
+            self.wfile.write(b"Chip is alive and fast!")
         def log_message(self, format, *args):
             pass
 
@@ -38,12 +43,10 @@ def run_health_server():
         httpd.serve_forever()
 
 def extract_ticker(text: str):
-    # בדיקת מילים בעברית
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in text:
             return ticker
 
-    # בדיקת טיקר באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
     ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP"}
     for word in words:
@@ -52,9 +55,17 @@ def extract_ticker(text: str):
     return None
 
 def analyze_and_format(ticker_symbol: str) -> str:
+    now = time.time()
+    # בדיקה האם המניה נבדקה ב-5 הדקות האחרונות
+    if ticker_symbol in MARKET_CACHE:
+        cached = MARKET_CACHE[ticker_symbol]
+        if now - cached["time"] < CACHE_TTL:
+            return cached["result"]
+
     try:
         ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="1y", interval="1d")
+        # משיכת 250 ימי מסחר בלבד במקום שנה שלמה
+        df = ticker.history(period="250d", interval="1d")
 
         if df.empty or len(df) < 155:
             return f"לא מצאתי מספיק נתונים על {ticker_symbol}. תוודא שזה טיקר אמריקאי תקין."
@@ -69,13 +80,17 @@ def analyze_and_format(ticker_symbol: str) -> str:
 
         mentor_text = get_mentor_analysis(ticker_symbol, result, last_price, rsi, sma150)
 
-        return (
+        formatted_reply = (
             f"📊 *צ'יפ בודק את {ticker_symbol}:*\n"
             f"מחיר נוכחי: {last_price:.2f}$ | ממוצע 150: {sma150:.2f}$ | RSI: {rsi:.1f}\n"
             f"החלטת מנוע: *{result.get('status')}*\n\n"
             f"💡 *מה צ'יפ אומר:*\n"
             f"{mentor_text}"
         )
+
+        # שמירה במטמון
+        MARKET_CACHE[ticker_symbol] = {"time": now, "result": formatted_reply}
+        return formatted_reply
     except Exception as e:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
@@ -109,5 +124,5 @@ def handle_all_messages(message):
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("...צ'יפ מחובר ומאזין בטלגרם", flush=True)
+    print("...צ'יפ (המהיר) מחובר ומאזין בטלגרם", flush=True)
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
