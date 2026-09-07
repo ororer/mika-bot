@@ -33,8 +33,13 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
 תן את חוות הדעת שלך על הגרף ב-2 עד 3 פסקאות קצרות וממוקדות.
 """
 
-    # סדר עדיפויות של מודלים יציבים
-    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+    # מודלים שקיימים ונתמכים בוודאות במפתח שלך לפי הלוג
+    candidate_models = [
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash",
+        "gemini-3.7-flash"
+    ]
 
     for model_name in candidate_models:
         try:
@@ -48,12 +53,5 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
         except Exception as e:
             print(f"[דיבוג] ניסיון עבור {model_name} נכשל: {e}")
             continue
-
-    # במקרה שכל המודלים נכשלו - הדפסת המודלים שקיימים בפועל במפתח
-    try:
-        models_list = [m.name for m in client.models.list()]
-        print(f"[דיבוג] רשימת מודלים זמינים במפתח שלך: {models_list}")
-    except Exception as list_err:
-        print(f"[דיבוג] שגיאה בשליפת רשימת מודלים: {list_err}")
 
     return "שגיאה: לא התקבל מענה מאף אחד ממודלי Gemini הזמינים."
