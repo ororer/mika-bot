@@ -1,4 +1,5 @@
 import os
+import time
 from google import genai
 from google.genai import types
 
@@ -17,41 +18,37 @@ CHIP_SYSTEM_INSTRUCTION = (
     "ענה תמיד בעברית שוטפת, קולחת וטבעית. תהיה תכליתי, קצר וחד."
 )
 
-MODELS = [
-    "gemini-2.5-flash",    # מודל מהיר ויציב כברירת מחדל
-    "gemini-3.6-flash",
-    "gemini-flash-latest"
-]
-
-# אתחול הלקוח פעם אחת בלבד בעליית השרת
+# אתחול הלקוח פעם אחת בלבד בעליית המערכת (חוסך Latency בכל הודעה)
 _api_key = os.environ.get("GEMINI_API_KEY")
 _client = genai.Client(api_key=_api_key) if _api_key else None
 
 def _call_gemini(prompt_text: str) -> str:
     if not _client:
         print("[שגיאה]: חסר GEMINI_API_KEY", flush=True)
-        return "שגיאה: חסר GEMINI_API_KEY."
+        return "שגיאה: חסר GEMINI_API_KEY במערכת."
 
     config = types.GenerateContentConfig(
         system_instruction=CHIP_SYSTEM_INSTRUCTION,
         temperature=0.6,
-        max_output_tokens=350  # מקצר את זמן יצירת התשובה
+        max_output_tokens=350
     )
 
-    for model_name in MODELS:
+    # ניסיון ישיר למודל היעד עם מנגנון Retry של שנייה אחת בלבד במקרה של עומס 503 רגעי
+    for attempt in range(2):
         try:
             response = _client.models.generate_content(
-                model=model_name,
+                model="gemini-3.6-flash",
                 contents=prompt_text,
                 config=config
             )
             if response and response.text:
                 return response.text.strip()
         except Exception as e:
-            print(f"[שגיאה במודל {model_name}]: {e}", flush=True)
-            continue
+            print(f"[Gemini 3.6 Flash - ניסיון {attempt + 1} נכשל]: {e}", flush=True)
+            if attempt == 0:
+                time.sleep(1)
 
-    return "סורי, יש כרגע עומס כללי בשרתי גוגל. תן חצי דקה ונסה שוב."
+    return "סורי, יש עומס רגעי בשרתים של גוגל (503). נסה שוב בעוד חצי דקה."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
