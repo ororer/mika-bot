@@ -21,9 +21,9 @@ try:
     bot_user = bot.get_me()
     BOT_USERNAME = bot_user.username.lower() if bot_user.username else ""
     BOT_ID = bot_user.id
-    print(f"[Bot Init] הבוט מחובר תחת המשתמש: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
+    print(f"[Bot Init] מחובר בהצלחה: @{BOT_USERNAME} (ID: {BOT_ID})", flush=True)
 except Exception as e:
-    print(f"[Bot Init] לא הצלחתי למשוך פרטי בוט: {e}", flush=True)
+    print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
 MARKET_CACHE = {}
 CACHE_TTL = 300
@@ -53,7 +53,8 @@ def run_health_server():
         httpd.serve_forever()
 
 def normalize_text(text: str) -> str:
-    # נרמול כל סוגי הגרשים לגרש סטנדרטי
+    if not text:
+        return ""
     return text.replace("’", "'").replace("`", "'").replace("״", '"')
 
 def extract_ticker(text: str):
@@ -62,17 +63,17 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # 1. חיפוש שם מניה בעברית
+    # 1. חיפוש מניה בעברית
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in clean_text:
             return ticker
 
-    # 2. חיפוש טיקר עם סימן דולר (למשל: $NVDA)
+    # 2. חיפוש טיקר עם $ (למשל: $NVDA)
     cashtag = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtag:
         return cashtag[0].upper()
 
-    # 3. מילים באנגלית תוך התעלמות ממילות שיחה נפוצות
+    # 3. מילים באנגלית תוך סינון מילות דיבור נפוצות
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
@@ -133,57 +134,73 @@ def send_welcome(message):
         "• דברו איתי חופשי: תייגו אותי, כתבו 'צ'יפ' או השיבו להודעה שלי!"
     )
 
-@bot.message_handler(func=lambda message: True)
+@bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_all_messages(message):
     raw_text = message.text or message.caption or ""
     user_text = raw_text.strip()
     if not user_text:
         return
 
+    chat_type = message.chat.type
+    chat_id = message.chat.id
+    print(f"[Debug Incoming] הצ'אט: {chat_id} ({chat_type}) | הודעה: '{user_text}'", flush=True)
+
     normalized = normalize_text(user_text)
-    chat_type = message.chat.type  # 'private', 'group', 'supergroup'
     is_private = (chat_type == 'private')
 
     # בדיקת תשובה לבוט
     is_reply_to_bot = False
-    if message.reply_to_message:
-        reply_from = message.reply_to_message.from_user
-        if reply_from and (reply_from.id == BOT_ID or (BOT_USERNAME and reply_from.username and reply_from.username.lower() == BOT_USERNAME)):
+    if message.reply_to_message and message.reply_to_message.from_user:
+        rep_id = message.reply_to_message.from_user.id
+        rep_user = (message.reply_to_message.from_user.username or "").lower()
+        if rep_id == BOT_ID or (BOT_USERNAME and rep_user == BOT_USERNAME):
             is_reply_to_bot = True
 
-    # בדיקת תיוג או פנייה ישירה לצ'יפ (כולל גרש חכם או רגיל)
-    is_mentioned = (
-        (BOT_USERNAME and f"@{BOT_USERNAME}" in normalized.lower()) or 
-        ("צ'יפ" in normalized) or 
-        ("ציפ" in normalized) or
-        ("chip" in normalized.lower())
-    )
+    # בדיקת תיוג או שם
+    is_mentioned = False
+    if BOT_USERNAME and f"@{BOT_USERNAME}" in normalized.lower():
+        is_mentioned = True
+    elif any(k in normalized.lower() for k in ["צ'יפ", "ציפ", "chip"]):
+        is_mentioned = True
 
     ticker = extract_ticker(user_text)
 
-    # התעלמות אם זו קבוצה וההודעה אינה פנייה לבוט או בקשת מניה
+    print(f"[Debug Checks] פרטי: {is_private} | ריפליי: {is_reply_to_bot} | מתוייג: {is_mentioned} | מניה: {ticker}", flush=True)
+
+    # אם זו קבוצה וההודעה אינה פנייה אליו
     if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
+        print("[Debug Skipped] ההודעה לא מיועדת לבוט. דילוג.", flush=True)
         return
 
     try:
-        bot.send_chat_action(message.chat.id, 'typing')
-    except Exception:
-        pass
+        bot.send_chat_action(chat_id, 'typing')
+    except Exception as e:
+        print(f"[Debug Error Action] {e}", flush=True)
 
-    # ניתוח מניה או תשובת שיחה חופשית
-    if ticker:
-        reply = analyze_and_format(ticker)
-    else:
-        clean_text = normalized
-        if BOT_USERNAME:
-            clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
-        clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
-        
-        reply = get_mentor_chat_reply(clean_text or normalized)
+    # הפקת מענה
+    try:
+        if ticker:
+            print(f"[Debug Route] ניתוח מניה עבור {ticker}", flush=True)
+            reply = analyze_and_format(ticker)
+        else:
+            print("[Debug Route] שיחת מנטור AI חופשית", flush=True)
+            clean_text = normalized
+            if BOT_USERNAME:
+                clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
+            reply = get_mentor_chat_reply(clean_text or normalized)
 
-    bot.reply_to(message, reply)
+        bot.reply_to(message, reply)
+        print("[Debug Success] תשובה נשלחה בהצלחה!", flush=True)
+    except Exception as e:
+        err_msg = f"אירעה שגיאה בעיבוד ההודעה: {e}"
+        print(f"[Debug Exception] {err_msg}", flush=True)
+        try:
+            bot.reply_to(message, err_msg)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
     print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות)", flush=True)
-    bot.infinity_polling(timeout=15, long_polling_timeout=10)
+    bot.infinity_polling(timeout=20, long_polling_timeout=15)
