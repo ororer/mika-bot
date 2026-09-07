@@ -14,13 +14,23 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+HEBREW_TICKERS = {
+    "טסלה": "TSLA",
+    "אפל": "AAPL",
+    "אנבידיה": "NVDA",
+    "אמזון": "AMZN",
+    "גוגל": "GOOGL",
+    "מיקרוסופט": "MSFT",
+    "מטא": "META"
+}
+
 def run_health_server():
     port = int(os.environ.get("PORT", 8080))
     class QuietHandler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"Chip is alive and watching the tape!")
+            self.wfile.write(b"Chip is alive!")
         def log_message(self, format, *args):
             pass
 
@@ -28,6 +38,12 @@ def run_health_server():
         httpd.serve_forever()
 
 def extract_ticker(text: str):
+    # בדיקת מילים בעברית
+    for heb_name, ticker in HEBREW_TICKERS.items():
+        if heb_name in text:
+            return ticker
+
+    # בדיקת טיקר באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', text.upper())
     ignored = {"HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", "CHIP"}
     for word in words:
@@ -70,8 +86,8 @@ def send_welcome(message):
         "אהלן! אני צ'יפ 🤖📊\n"
         "הסיידקיק שלך לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
         "מה אפשר לעשות איתי?\n"
-        "• שלח לי טיקר באנגלית (למשל: NVDA, AAPL, AMZN) ואבדוק לך את הגרף מיידית.\n"
-        "• שאל אותי כל שאלה על ניהול סיכונים, תבניות נרות, ממוצעים או אסטרטגיה."
+        "• שלח לי טיקר (NVDA, TSLA, או 'טסלה') ואבדוק את הגרף.\n"
+        "• שאל שאלות כלליות על השוק והאסטרטגיה."
     )
 
 @bot.message_handler(func=lambda message: True)
@@ -93,5 +109,5 @@ def handle_all_messages(message):
 
 if __name__ == "__main__":
     threading.Thread(target=run_health_server, daemon=True).start()
-    print("צ'יפ מחובר ומאזין בטלגרם...")
+    print("...צ'יפ מחובר ומאזין בטלגרם", flush=True)
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
