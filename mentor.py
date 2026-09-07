@@ -1,4 +1,5 @@
 import os
+import sys
 from google import genai
 from google.genai import types
 
@@ -20,26 +21,32 @@ CHIP_SYSTEM_INSTRUCTION = (
 def _call_gemini(prompt_text: str) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
+        print("[שגיאה]: חסר GEMINI_API_KEY", flush=True)
         return "שגיאה: חסר GEMINI_API_KEY."
 
     client = genai.Client(api_key=api_key)
     
-    # פנייה ישירה למודל יציב ומהיר בלי עיכובים
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                system_instruction=CHIP_SYSTEM_INSTRUCTION,
-                temperature=0.7
+    # שימוש ישיר במודלים רשמיים וקיימים
+    models_to_try = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    for model_name in models_to_try:
+        try:
+            print(f"[Chip] שולח בקשה למודל: {model_name}...", flush=True)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    system_instruction=CHIP_SYSTEM_INSTRUCTION,
+                    temperature=0.7
+                )
             )
-        )
-        if response and response.text:
-            return response.text
-    except Exception as e:
-        print(f"[שגיאה ב-Gemini]: {e}")
+            if response and response.text:
+                print(f"[Chip] התקבלה תשובה בהצלחה מ-{model_name}", flush=True)
+                return response.text
+        except Exception as e:
+            print(f"[שגיאה במודל {model_name}]: {e}", flush=True)
 
-    return "סורי, היה עומס קל ברשת. נסה לשאול אותי שוב עוד רגע!"
+    return "סורי, יש בעיה בחיבור לג'מיני. בדוק את ה-API Key או הלוגים."
 
 def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi: float, sma150: float) -> str:
     prompt = f"""
