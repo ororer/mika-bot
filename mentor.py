@@ -7,7 +7,13 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-MODEL_NAME = "gemini-2.5-flash"
+# רשימת מודלים לפי סדר עדיפות לעמידות מקסימלית
+CANDIDATE_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-pro"
+]
 
 SYSTEM_INSTRUCTION = """
 אתה 'צ'יפ' (Chip) – מנטור וסיידקיק מקצועי, חד, כריזמטי ושנון למסחר סווינג טכני, המלווה קהילת סוחרים.
@@ -27,6 +33,26 @@ def get_current_market_context() -> str:
     time_str = now_ny.strftime("%H:%M")
     return f"תאריך היום (שעון ניו יורק): {date_str}, יום: {day_name}, שעה: {time_str}."
 
+def call_gemini(prompt: str) -> str:
+    if not GEMINI_API_KEY:
+        return "מפתח ה-API של Gemini אינו מוגדר."
+
+    last_error = None
+    for model_name in CANDIDATE_MODELS:
+        try:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+            response = model.generate_content(prompt)
+            if response and response.text:
+                return response.text.strip()
+        except Exception as e:
+            last_error = e
+            continue
+
+    raise RuntimeError(f"כל המודלים נכשלו. שגיאה אחרונה: {last_error}")
+
 def get_mentor_analysis(ticker: str, engine_result: dict, price: float, rsi: float, sma150: float) -> str:
     if not GEMINI_API_KEY:
         status = engine_result.get("status", "WAIT")
@@ -43,12 +69,10 @@ def get_mentor_analysis(ticker: str, engine_result: dict, price: float, rsi: flo
 - מדד RSI: {rsi:.1f}
 - פרטים נוספים: {engine_result.get('reason', 'ללא הערות מיוחדות')}
 
-תן סקירת מנטור קצרה, שנונה ומדויקת בסגנון צ'יפ: האם יש כאן הזדמנות לפי הפלייבוק, למה לשים לב, והיכן הסיכון.
+תן סקירת מנטור קצרה, שנונה ומדויקת בסגנון צ'יפ: האם יש כאן הזדמנות לפי הפלייבוק, למה לשים לב, והיכן הסיכון. שמור על תשובה ממוקדת בעברית.
 """
     try:
-        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return call_gemini(prompt)
     except Exception as e:
         return f"צ'יפ כאן: המנוע מראה {engine_result.get('status')}. מחיר סביב {price:.2f}$, ממוצע 150 ב-{sma150:.2f}$, RSI ב-{rsi:.1f}. ({e})"
 
@@ -66,8 +90,6 @@ def get_mentor_chat_reply(user_message: str) -> str:
 השב לו בקצרה, בביטחון, בהומור קל ובמקצועיות בתור צ'יפ המנטור. אם הוא שואל לגבי מסחר היום או זמנים, התבסס על התאריך והשעה בניו יורק כדי לענות במדויק.
 """
     try:
-        model = genai.GenerativeModel(model_name=MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        return call_gemini(prompt)
     except Exception as e:
         return f"שומע אותך! יש כרגע עומס קל בחיבור: {e}"
