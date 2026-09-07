@@ -17,30 +17,30 @@ CHIP_SYSTEM_INSTRUCTION = (
     "ענה תמיד בעברית שוטפת, קולחת וטבעית."
 )
 
-candidate_models = [
-    "gemini-2.5-flash",
-    "gemini-flash-latest",
-    "gemini-3.6-flash"
-]
-
-def _call_gemini(contents: str) -> str:
+def _get_chat_response(prompt_text: str) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return "שגיאה: חסר GEMINI_API_KEY."
 
     client = genai.Client(api_key=api_key)
-    config = types.GenerateContentConfig(
-        system_instruction=CHIP_SYSTEM_INSTRUCTION,
-        temperature=0.7
-    )
+    
+    # שימוש ב-chats.create לפי ההנחיה של הספרייה כדי למנוע אזהרות ושגיאות AFC
+    candidate_models = [
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+        "gemini-2.5-flash"
+    ]
 
     for model_name in candidate_models:
         try:
-            response = client.models.generate_content(
+            chat = client.chats.create(
                 model=model_name,
-                contents=contents,
-                config=config
+                config=types.GenerateContentConfig(
+                    system_instruction=CHIP_SYSTEM_INSTRUCTION,
+                    temperature=0.7
+                )
             )
+            response = chat.send_message(prompt_text)
             if response and response.text:
                 return response.text
         except Exception as e:
@@ -62,8 +62,8 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
 
 תן את חוות הדעת שלך בתור צ'יפ ב-2 פסקאות קצרות, חדות וממוקדות.
 """
-    return _call_gemini(prompt)
+    return _get_chat_response(prompt)
 
 def get_mentor_chat_reply(user_question: str) -> str:
     prompt = f"משתמש שואל אותך: {user_question}\nענה לו ישירות כצ'יפ."
-    return _call_gemini(prompt)
+    return _get_chat_response(prompt)
