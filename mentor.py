@@ -17,35 +17,27 @@ CHIP_SYSTEM_INSTRUCTION = (
     "ענה תמיד בעברית שוטפת, קולחת וטבעית."
 )
 
-def _get_chat_response(prompt_text: str) -> str:
+def _call_gemini(prompt_text: str) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         return "שגיאה: חסר GEMINI_API_KEY."
 
     client = genai.Client(api_key=api_key)
     
-    # שימוש ב-chats.create לפי ההנחיה של הספרייה כדי למנוע אזהרות ושגיאות AFC
-    candidate_models = [
-        "gemini-3.6-flash",
-        "gemini-flash-latest",
-        "gemini-2.5-flash"
-    ]
-
-    for model_name in candidate_models:
-        try:
-            chat = client.chats.create(
-                model=model_name,
-                config=types.GenerateContentConfig(
-                    system_instruction=CHIP_SYSTEM_INSTRUCTION,
-                    temperature=0.7
-                )
+    # פנייה ישירה למודל יציב ומהיר בלי עיכובים
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=CHIP_SYSTEM_INSTRUCTION,
+                temperature=0.7
             )
-            response = chat.send_message(prompt_text)
-            if response and response.text:
-                return response.text
-        except Exception as e:
-            print(f"[שגיאה במודל {model_name}]: {e}")
-            continue
+        )
+        if response and response.text:
+            return response.text
+    except Exception as e:
+        print(f"[שגיאה ב-Gemini]: {e}")
 
     return "סורי, היה עומס קל ברשת. נסה לשאול אותי שוב עוד רגע!"
 
@@ -62,8 +54,8 @@ def get_mentor_analysis(ticker: str, engine_result: dict, last_price: float, rsi
 
 תן את חוות הדעת שלך בתור צ'יפ ב-2 פסקאות קצרות, חדות וממוקדות.
 """
-    return _get_chat_response(prompt)
+    return _call_gemini(prompt)
 
 def get_mentor_chat_reply(user_question: str) -> str:
     prompt = f"משתמש שואל אותך: {user_question}\nענה לו ישירות כצ'יפ."
-    return _get_chat_response(prompt)
+    return _call_gemini(prompt)
