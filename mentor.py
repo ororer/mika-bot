@@ -7,12 +7,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# המודלים המדויקים והמאושרים מחשבונך לפי סדר עדיפות (סופר מהירים)
+# המודלים הנתמכים והמומלצים רשמית על ידי ה-API של גוגל בחשבונך
 CANDIDATE_MODELS = [
-    "models/gemini-flash-latest",
-    "models/gemini-2.5-flash",
-    "models/gemini-flash-lite-latest",
-    "models/gemini-2.5-flash-lite"
+    "models/gemini-3.5-flash-lite",
+    "models/gemini-3.5-flash",
+    "models/gemini-3.8-flash"
 ]
 
 SYSTEM_INSTRUCTION = """
@@ -51,7 +50,7 @@ def call_gemini(prompt: str) -> str:
             last_error = str(e)
             continue
 
-    return f"צ'יפ כאן: יש כרגע עומס זמני בתקשורת מול ה-AI ({last_error}). נחזור לפעילות מלאה בהקדם!"
+    return f"צ'יפ כאן: תקלת תקשורת מול ה-AI ({last_error})."
 
 def get_mentor_analysis(ticker: str, result: dict, last_price: float, rsi: float, sma150: float) -> str:
     context = get_current_market_context()
