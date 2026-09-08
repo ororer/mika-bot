@@ -7,12 +7,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# רשימת שמות מודלים אפשריים לפי סדר עדיפות
+# רשימת המודלים הפעילים בחשבון לפי סדר עדיפות
 CANDIDATE_MODELS = [
-    "gemini-1.5-flash",
-    "models/gemini-1.5-flash",
-    "gemini-1.5-pro",
-    "models/gemini-1.5-pro"
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.5-flash-lite"
 ]
 
 SYSTEM_INSTRUCTION = """
