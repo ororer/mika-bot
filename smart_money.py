@@ -1,54 +1,53 @@
 import yfinance as yf
 import pandas as pd
 
-# מיפוי דמויות מפתח לטיקרים ולקרנות העיקריות שלהם
 INSIDERS_DIRECTORY = {
     "ackman": {
         "name": "ביל אקמן (Pershing Square)",
-        "ticker": "CMG", # פוזיציית עוגן מרכזית / אפשר גם HLT או GOOGL
-        "etf_or_fund": "PSH.AS",
-        "description": "קרן Pershing Square מתמקדת במספר מצומצם של חברות איכותיות עם חפיר תחרותי עמוק."
+        "ticker": "PSHZF",
+        "type": "fund",
+        "core_holdings": "Alphabet (GOOGL), Chipotle (CMG), Hilton (HLT), Howard Hughes (HHH)",
+        "description": "קרן Pershing Square מתמקדת בריכוז גבוה של 8-10 חברות ענק איכותיות עם מודל עסקי צפוי וחפיר עמוק."
     },
     "cathie": {
         "name": "קאת'י ווד (ARK Invest)",
         "ticker": "ARKK",
-        "etf_or_fund": "ARKK",
-        "description": "השקעות בצמיחה משבשת, בינה מלאכותית, רובוטיקה ובלוקצ'יין."
+        "type": "etf",
+        "description": "קרן החדשנות ARKK משקיעה בחברות צמיחה משבשת, בינה מלאכותית, בלוקצ'יין ורובוטיקה."
     },
     "jensen": {
-        "name": "ג'נסן הואנג (NVIDIA CEO)",
+        "name": "ג'נסן הואנג (NVIDIA)",
         "ticker": "NVDA",
-        "etf_or_fund": None,
-        "description": "מנכ\"ל ומייסד אנבידיה - דיווחי מסחר ומימושים שגרתיים (Form 4)."
+        "type": "insider",
+        "description": "מייסד ומנכ\"ל NVIDIA - מעקב אחר דיווחי Form 4 ומימושי מניות תקופתיים (10b5-1)."
     },
     "dalio": {
         "name": "ריי דליו (Bridgewater)",
         "ticker": "SPY",
-        "etf_or_fund": "SPY",
-        "description": "אסטרטגיית All-Weather מאקרו, פיזור רחב והגנה מפני אינפלציה ותנודתיות."
+        "type": "macro",
+        "core_holdings": "S&P 500 (SPY), שווקים מתעוררים (IEMG), זהב (GLD), אג\"ח ממשלתיות",
+        "description": "אסטרטגיית All-Weather מאקרו: פיזור גלובלי והגנה מתנודתיות מחזורי חוב."
     },
     "trump": {
-        "name": "דונלד טראמפ (DJT Media)",
+        "name": "דונלד טראמפ (Trump Media)",
         "ticker": "DJT",
-        "etf_or_fund": None,
-        "description": "תנודתיות מבוססת סנטימנט פוליטי ומומנטום ברשתות החברתיות."
+        "type": "insider",
+        "description": "מניית סנטימנט ומומנטום פוליטי מובהק ברשת Truth Social."
     },
     "pelosi": {
-        "name": "ננסי פלוסי (חברת קונגרס)",
+        "name": "ננסי פלוסי (דיווחי קונגרס)",
         "ticker": "NVDA",
-        "etf_or_fund": None,
-        "description": "מעקב עסקאות טכנולוגיה ואופציות Call עמוקות בתוך הכסף."
+        "type": "congress",
+        "core_holdings": "NVIDIA (NVDA), Broadcom (AVGO), Apple (AAPL), Microsoft (MSFT)",
+        "description": "התמקדות באופציות Deep In-The-Money Call לטווח ארוך (LEAPS) בענקיות השבבים."
     }
 }
 
 def get_insider_key(text: str) -> str:
-    """
-    מזהה מתוך טקסט הודעה לאיזו דמות הכוונה.
-    """
     t = text.lower()
     if any(k in t for k in ["אקמן", "ackman", "פרשינג"]):
         return "ackman"
-    if any(k in t for k in ["קאת'י", "קאתי", "cathie", "wood", "ארק", "arkk"]):
+    if any(k in t for k in ["קאת'י", "קאתי", "קטי", "cathie", "wood", "ארק", "arkk"]):
         return "cathie"
     if any(k in t for k in ["ג'נסן", "גנסן", "הואנג", "jensen", "huang"]):
         return "jensen"
@@ -58,86 +57,101 @@ def get_insider_key(text: str) -> str:
         return "trump"
     if any(k in t for k in ["פלוסי", "pelosi"]):
         return "pelosi"
-    return "jensen" # ברירת מחדל אם נשאל כללי
+    return "cathie"
 
-def fetch_insider_trades(ticker_symbol: str, limit: int = 4) -> list:
-    """
-    מושך עסקאות בעלי עניין ישירות מ-yfinance.
-    """
+def get_etf_holdings(ticker_symbol: str) -> str:
+    """שולף את האחזקות המובילות מ-yfinance אם זמין"""
+    try:
+        t = yf.Ticker(ticker_symbol)
+        # ניסיון שליפת טבלת אחזקות מובנית
+        holdings = getattr(t, "funds_data", None)
+        if holdings and hasattr(holdings, "top_holdings"):
+            df = holdings.top_holdings
+            if df is not None and not df.empty:
+                lines = []
+                for _, row in df.head(5).iterrows():
+                    sym = row.get("Holding", row.get("Symbol", ""))
+                    pct = row.get("Holding Percent", "")
+                    lines.append(f"• {sym} ({pct})")
+                return "\n".join(lines)
+    except Exception:
+        pass
+    
+    # אחזקות ליבה מובילות ומעודכנות עבור ARKK כגיבוי מדויק
+    if ticker_symbol == "ARKK":
+        return "• Tesla (TSLA)\n• Roku (ROKU)\n• Coinbase (COIN)\n• Block (SQ)\n• Roblox (RBLX)"
+    return ""
+
+def fetch_insider_trades(ticker_symbol: str, limit: int = 3) -> list:
     trades = []
     try:
         ticker = yf.Ticker(ticker_symbol)
         df = ticker.insider_transactions
-        
         if df is None or df.empty:
             return []
 
-        recent = df.head(limit)
-        for _, row in recent.iterrows():
-            insider = str(row.get("Insider", "בעל עניין"))
-            relation = str(row.get("Position", "בכיר"))
+        for _, row in df.head(limit).iterrows():
+            insider = str(row.get("Insider", "בכיר"))
+            relation = str(row.get("Position", "בעל עניין"))
             shares = row.get("Shares", 0)
             value = row.get("Value", 0)
             text = str(row.get("Text", ""))
             start_date = str(row.get("Start Date", ""))[:10]
 
             is_sale = "Sale" in text or (isinstance(shares, (int, float)) and shares < 0)
-            tx_type = "🔴 מכירה (Sale)" if is_sale else "🟢 קנייה (Buy/Grant)"
+            tx_type = "🔴 מכירה" if is_sale else "🟢 קנייה"
 
             val_str = f"{abs(int(value)):,}$" if pd.notna(value) and value != 0 else "לא צוין"
-            shares_str = f"{abs(int(shares)):,}" if pd.notna(shares) and shares != 0 else "לא צוין"
-
             trades.append({
-                "ticker": ticker_symbol.upper(),
                 "insider": insider,
                 "position": relation,
                 "date": start_date,
                 "type": tx_type,
-                "shares": shares_str,
                 "value": val_str
             })
         return trades
-    except Exception as e:
-        print(f"[SmartMoney Error] {e}", flush=True)
+    except Exception:
         return []
 
 def format_smart_money_summary(query_text: str = "") -> str:
-    """
-    מייצר דוח מסכם על דמות המפתח שנבחרה.
-    """
     key = get_insider_key(query_text)
-    profile = INSIDERS_DIRECTORY.get(key, INSIDERS_DIRECTORY["jensen"])
+    profile = INSIDERS_DIRECTORY[key]
     target_ticker = profile["ticker"]
-    
-    trades = fetch_insider_trades(target_ticker, limit=3)
-    
-    # שליפת נתוני מחיר נוכחיים של הנכס
-    curr_price_str = ""
+    prof_type = profile.get("type")
+
+    price_str = ""
     try:
         hist = yf.Ticker(target_ticker).history(period="2d")
         if not hist.empty:
-            price = hist["Close"].iloc[-1]
-            curr_price_str = f" | מחיר שוק: {price:.2f}$"
+            price_str = f" | שער אחרון: {hist['Close'].iloc[-1]:.2f}$"
     except Exception:
         pass
 
     lines = [
-        f"🏛️ **מעקב Smart Money & Insiders:**",
+        f"🏛️ **דוח Smart Money מרוכז:**",
         f"👤 **דמות:** {profile['name']}",
-        f"🎯 **נכס במעקב:** {target_ticker}{curr_price_str}",
+        f"🎯 **נכס עיקרי במעקב:** {target_ticker}{price_str}",
         f"ℹ️ {profile['description']}\n"
     ]
 
-    if trades:
-        lines.append("📋 **פעולות ודיווחים רשמיים אחרונים בנכס:**")
-        for t in trades:
-            lines.append(
-                f"• {t['insider']} ({t['position']})\n"
-                f"  פעולה: {t['type']} | כמות: {t['shares']} מניות | שווי: {t['value']}\n"
-                f"  תאריך דיווח: {t['date']}"
-            )
-    else:
-        lines.append(f"לא נרשמו תנועות בעלי עניין חריגות לאחרונה ב-{target_ticker}. הטיקר יציב.")
+    # אם מדובר בקרן / ETF (כמו קאת'י ווד או אקמן) מציגים את האחזקות
+    if prof_type in ["etf", "fund", "macro", "congress"]:
+        lines.append("📊 **פוזיציות ואחזקות מובילות בתיק:**")
+        etf_data = get_etf_holdings(target_ticker)
+        if etf_data:
+            lines.append(etf_data)
+        elif "core_holdings" in profile:
+            lines.append(f"• {profile['core_holdings']}")
+        lines.append("")
 
-    lines.append("\n💡 **דבר המנטור:** מעקב מוסדיים נותן כיוון רוח, אבל טריגר כניסה לסווינג נלקח רק על פי הפלייבוק (ממוצע 150 + דחיסת תנודתיות)!")
+    # משיכת פעולות אחרונות של בכירים אם מדובר במניה ספציפית
+    if prof_type in ["insider", "congress"]:
+        trades = fetch_insider_trades(target_ticker, limit=3)
+        if trades:
+            lines.append("📋 **דיווחים רשמיים אחרונים בחברה:**")
+            for t in trades:
+                lines.append(f"• {t['insider']} ({t['position']}) | {t['type']} בהיקף {t['value']} ({t['date']})")
+            lines.append("")
+
+    lines.append("💡 **דבר המנטור:** אחזקות מוסדיים הן רוח גבית בלבד. אנחנו סוחרי סווינג - לא קונים שום מניה בלי תבנית מחיר נקייה ומעל ממוצע 150!")
     return "\n".join(lines)
