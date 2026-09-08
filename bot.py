@@ -105,21 +105,26 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
+    # 1. בדיקת Cashtag ($AAPL)
     cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtags:
         return cashtags[0].upper()
 
+    # 2. בדיקת מיפוי עברי
     for heb_name, ticker in HEBREW_TICKERS.items():
-        if re.search(rf"\b{heb_name}\b", clean_text):
+        if heb_name in clean_text:
             return ticker
 
+    # 3. ביטויי שיחה שאינם מניות
     chat_phrases = [
         "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
-        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב"
+        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
+        "מה דעתך", "איך לפעול", "מה לעשות"
     ]
     if any(p in clean_text for p in chat_phrases):
         return None
 
+    # 4. מילים באנגלית - סינון מילות שיחה
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
@@ -170,16 +175,20 @@ def analyze_and_format(ticker_symbol: str) -> str:
         MARKET_CACHE[ticker_symbol] = {"time": now, "result": formatted_reply}
         return formatted_reply
     except Exception as e:
+        print(f"[Analyze Error] {e}", flush=True)
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
 def safe_reply(message, text: str):
+    if not text:
+        return
     try:
         bot.reply_to(message, text, parse_mode="Markdown")
-    except Exception:
+    except Exception as e:
+        print(f"[Markdown Send Failed, fallback to plain text]: {e}", flush=True)
         try:
             bot.reply_to(message, text)
-        except Exception as e:
-            print(f"[Reply Error] {e}", flush=True)
+        except Exception as e2:
+            print(f"[Final Reply Error]: {e2}", flush=True)
 
 def process_incoming_message(message):
     if getattr(message, 'is_automatic_forward', False):
@@ -217,10 +226,13 @@ def process_incoming_message(message):
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query:
-        ticker = extract_ticker(user_text)
-        if not ticker:
-            return
+    ticker = extract_ticker(user_text)
+
+    # סינון קבוצות: מתעלמים אם לא פנו לצ'יפ, אין פקודת עסקאות ואין טיקר
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not ticker:
+        return
+
+    print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}' | Ticker: {ticker}", flush=True)
 
     try:
         bot.send_chat_action(chat_id, 'typing')
@@ -230,16 +242,20 @@ def process_incoming_message(message):
     try:
         if is_trades_query:
             reply = format_active_trades()
+        elif ticker:
+            reply = analyze_and_format(ticker)
         else:
-            ticker = extract_ticker(user_text)
-            if ticker:
-                reply = analyze_and_format(ticker)
-            else:
-                clean_text = normalized
-                if BOT_USERNAME:
-                    clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
-                clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
-                reply = get_mentor_chat_reply(clean_text or normalized)
+            # ניקוי פנייה ישירה והעברת המסר למנטור
+            clean_text = normalized
+            if BOT_USERNAME:
+                clean_text = clean_text.replace(f"@{BOT_USERNAME}", "")
+            for tag in ["צ'יפ", "ציפ", "chip", "CHIP"]:
+                clean_text = clean_text.replace(tag, "")
+            clean_text = clean_text.strip()
+
+            prompt_text = clean_text if clean_text else normalized
+            print(f"[Routing to Chat AI] Prompt: '{prompt_text}'", flush=True)
+            reply = get_mentor_chat_reply(prompt_text)
 
         safe_reply(message, reply)
     except Exception as e:
