@@ -112,14 +112,9 @@ def extract_ticker(text: str):
     if cashtags:
         return cashtags[0].upper()
 
-    # 2. מילות שיחה ופקודות
-    chat_phrases = [
-        "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
-        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
-        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "/insiders", "/smartmoney",
-        "/ackman", "/cathie", "/jensen", "/trump"
-    ]
-    if any(p in clean_text for p in chat_phrases):
+    # 2. סינון שאלות מוסדיים שלא יזוהו בטעות כמניה
+    smart_tokens = ["אקמן", "קאתי", "קאת'י", "קטי", "ווד", "הואנג", "ג'נסן", "דליו", "טראמפ", "פלוסי"]
+    if any(k in clean_text.lower() for k in smart_tokens):
         return None
 
     # 3. מילון שמות עברי
@@ -238,12 +233,12 @@ def process_incoming_message(message):
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
     
-    # בדיקת מילות מפתח לשמות המוסדיים
-    smart_money_keywords = [
+    # זיהוי חזק של Smart Money (כולל כל וריאציות הכתיב בעברית)
+    smart_money_triggers = [
         "/smartmoney", "/pelosi", "/ackman", "/cathie", "/jensen", "/trump",
-        "פלוסי", "אקמן", "קאת'י", "קאתי", "ג'נסן", "גנסן", "דליו", "טראמפ", "מוסדיים", "בעלי עניין"
+        "פלוסי", "אקמן", "קאת'י", "קאתי", "קטי", "ווד", "ג'נסן", "גנסן", "דליו", "טראמפ", "מוסדיים", "מחזיקה", "מחזיק"
     ]
-    is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_keywords)
+    is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_triggers)
 
     ticker = extract_ticker(user_text)
 
