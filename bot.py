@@ -9,6 +9,7 @@ import yfinance as yf
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
 from db import get_active_trades, get_trade_history
+from smart_money import fetch_recent_congress_trades
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
@@ -264,6 +265,27 @@ def process_incoming_message(message):
 @bot.message_handler(commands=['trades'])
 def handle_trades_command(message):
     process_incoming_message(message)
+
+@bot.message_handler(commands=['pelosi'])
+def test_pelosi_command(message):
+    try:
+        bot.send_chat_action(message.chat.id, 'typing')
+    except Exception:
+        pass
+
+    trades = fetch_recent_congress_trades("Nancy Pelosi", limit=3)
+    if not trades:
+        safe_reply(message, "לא הצלחתי למשוך עסקאות כרגע או שלא נמצאו עסקאות חדשות.")
+        return
+
+    lines = ["🏛️ בדיקת דיווחי קונגרס (ננסי פלוסי):\n"]
+    for t in trades:
+        lines.append(
+            f"• טיקר: {t['ticker']} | תאריך דיווח: {t['disclosure_date']}\n"
+            f"  סוג פעולה: {t['type']} | היקף: {t['amount']}\n"
+        )
+
+    safe_reply(message, "\n".join(lines))
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
