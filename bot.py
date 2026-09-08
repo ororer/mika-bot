@@ -100,37 +100,50 @@ def format_active_trades() -> str:
     response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
     return "\n".join(response_lines)
 
+def format_pelosi_trades() -> str:
+    trades = fetch_recent_congress_trades("Nancy Pelosi", limit=3)
+    if not trades:
+        return "לא הצלחתי למשוך עסקאות כרגע או שלא נמצאו דיווחים חדשים."
+
+    lines = ["🏛️ דיווחי קונגרס אחרונים (ננסי פלוסי):\n"]
+    for t in trades:
+        lines.append(
+            f"• טיקר: {t['ticker']} | תאריך דיווח: {t['disclosure_date']}\n"
+            f"  סוג פעולה: {t['type']} | היקף: {t['amount']}\n"
+        )
+    return "\n".join(lines)
+
 def extract_ticker(text: str):
     clean_text = normalize_text(text)
     if BOT_USERNAME:
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # 1. בדיקת Cashtag ($AAPL)
+    # 1. Cashtag ($AAPL)
     cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtags:
         return cashtags[0].upper()
 
-    # 2. בדיקת מיפוי עברי
+    # 2. מיפוי עברי
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in clean_text:
             return ticker
 
-    # 3. ביטויי שיחה שאינם מניות
+    # 3. מילות שיחה ופקודות שאינן מניות
     chat_phrases = [
         "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
         "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
-        "מה דעתך", "איך לפעול", "מה לעשות"
+        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "פלוסי"
     ]
     if any(p in clean_text for p in chat_phrases):
         return None
 
-    # 4. מילים באנגלית - סינון מילות שיחה
+    # 4. מילים בודדות באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES", "PELOSI"
     }
     filtered = [w for w in words if w not in ignored]
     if len(filtered) == 1 and len(clean_text.split()) <= 3:
@@ -182,14 +195,25 @@ def analyze_and_format(ticker_symbol: str) -> str:
 def safe_reply(message, text: str):
     if not text:
         return
+    chat_id = message.chat.id
+    is_channel = (message.chat.type == 'channel')
+
+    # בערוצים שולחים כהודעה חדשה לערוץ
+    if is_channel:
+        try:
+            bot.send_message(chat_id, text, parse_mode="Markdown")
+        except Exception:
+            bot.send_message(chat_id, text)
+        return
+
+    # בצ'אטים פרטיים וקבוצות מגיבים להודעה
     try:
         bot.reply_to(message, text, parse_mode="Markdown")
-    except Exception as e:
-        print(f"[Markdown Send Failed, fallback to plain text]: {e}", flush=True)
+    except Exception:
         try:
             bot.reply_to(message, text)
-        except Exception as e2:
-            print(f"[Final Reply Error]: {e2}", flush=True)
+        except Exception as e:
+            print(f"[Reply Error] {e}", flush=True)
 
 def process_incoming_message(message):
     if getattr(message, 'is_automatic_forward', False):
@@ -211,6 +235,7 @@ def process_incoming_message(message):
     chat_id = message.chat.id
     normalized = normalize_text(user_text)
     is_private = (chat_type == 'private')
+    is_channel = (chat_type == 'channel')
 
     is_reply_to_bot = False
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -226,14 +251,15 @@ def process_incoming_message(message):
         is_mentioned = True
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
+    is_pelosi_query = any(cmd in normalized.lower() for cmd in ["/pelosi", "פלוסי", "ננסי פלוסי"])
 
     ticker = extract_ticker(user_text)
 
-    # סינון קבוצות: מתעלמים אם לא פנו לצ'יפ, אין פקודת עסקאות ואין טיקר
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not ticker:
+    # סינון: אם זה בקבוצה או ערוץ, מגיבים רק אם תויג צ'יפ, או שיש פקודה, או שיש טיקר
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_pelosi_query and not ticker:
         return
 
-    print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}' | Ticker: {ticker}", flush=True)
+    print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}'", flush=True)
 
     try:
         bot.send_chat_action(chat_id, 'typing')
@@ -243,10 +269,11 @@ def process_incoming_message(message):
     try:
         if is_trades_query:
             reply = format_active_trades()
+        elif is_pelosi_query:
+            reply = format_pelosi_trades()
         elif ticker:
             reply = analyze_and_format(ticker)
         else:
-            # ניקוי פנייה ישירה והעברת המסר למנטור
             clean_text = normalized
             if BOT_USERNAME:
                 clean_text = clean_text.replace(f"@{BOT_USERNAME}", "")
@@ -255,37 +282,15 @@ def process_incoming_message(message):
             clean_text = clean_text.strip()
 
             prompt_text = clean_text if clean_text else normalized
-            print(f"[Routing to Chat AI] Prompt: '{prompt_text}'", flush=True)
             reply = get_mentor_chat_reply(prompt_text)
 
         safe_reply(message, reply)
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
 
-@bot.message_handler(commands=['trades'])
-def handle_trades_command(message):
+@bot.message_handler(commands=['trades', 'pelosi'])
+def handle_commands(message):
     process_incoming_message(message)
-
-@bot.message_handler(commands=['pelosi'])
-def test_pelosi_command(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-    except Exception:
-        pass
-
-    trades = fetch_recent_congress_trades("Nancy Pelosi", limit=3)
-    if not trades:
-        safe_reply(message, "לא הצלחתי למשוך עסקאות כרגע או שלא נמצאו עסקאות חדשות.")
-        return
-
-    lines = ["🏛️ בדיקת דיווחי קונגרס (ננסי פלוסי):\n"]
-    for t in trades:
-        lines.append(
-            f"• טיקר: {t['ticker']} | תאריך דיווח: {t['disclosure_date']}\n"
-            f"  סוג פעולה: {t['type']} | היקף: {t['amount']}\n"
-        )
-
-    safe_reply(message, "\n".join(lines))
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
