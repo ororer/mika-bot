@@ -9,7 +9,7 @@ import yfinance as yf
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
 from db import get_active_trades, get_trade_history
-from smart_money import fetch_recent_congress_trades
+from smart_money import fetch_insider_trades
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
@@ -100,16 +100,17 @@ def format_active_trades() -> str:
     response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
     return "\n".join(response_lines)
 
-def format_pelosi_trades() -> str:
-    trades = fetch_recent_congress_trades("Nancy Pelosi", limit=3)
+def format_insiders_report(target_ticker: str = "NVDA") -> str:
+    trades = fetch_insider_trades(target_ticker, limit=4)
     if not trades:
-        return "לא הצלחתי למשוך עסקאות כרגע או שלא נמצאו דיווחים חדשים."
+        return f"לא נמצאו דיווחי בעלי עניין עדכניים עבור {target_ticker}."
 
-    lines = ["🏛️ דיווחי קונגרס אחרונים (ננסי פלוסי):\n"]
+    lines = [f"🏛️ דיווחי בעלי עניין ובכירים (Smart Money - {target_ticker}):\n"]
     for t in trades:
         lines.append(
-            f"• טיקר: {t['ticker']} | תאריך דיווח: {t['disclosure_date']}\n"
-            f"  סוג פעולה: {t['type']} | היקף: {t['amount']}\n"
+            f"• {t['insider']} ({t['position']})\n"
+            f"  פעולה: {t['type']} | כמות מניות: {t['shares']} | שווי: {t['value']}\n"
+            f"  תאריך: {t['date']}\n"
         )
     return "\n".join(lines)
 
@@ -129,21 +130,21 @@ def extract_ticker(text: str):
         if heb_name in clean_text:
             return ticker
 
-    # 3. מילות שיחה ופקודות שאינן מניות
+    # 3. מילות שיחה ופקודות
     chat_phrases = [
         "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
         "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
-        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "פלוסי"
+        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "/insiders"
     ]
     if any(p in clean_text for p in chat_phrases):
         return None
 
-    # 4. מילים בודדות באנגלית
+    # 4. מילים באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES", "PELOSI"
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES", "PELOSI", "INSIDERS"
     }
     filtered = [w for w in words if w not in ignored]
     if len(filtered) == 1 and len(clean_text.split()) <= 3:
@@ -248,11 +249,11 @@ def process_incoming_message(message):
         is_mentioned = True
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
-    is_pelosi_query = any(cmd in normalized.lower() for cmd in ["/pelosi", "פלוסי", "ננסי פלוסי"])
+    is_insider_query = any(cmd in normalized.lower() for cmd in ["/insiders", "/pelosi", "בעלי עניין", "אינסיידרים"])
 
     ticker = extract_ticker(user_text)
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_pelosi_query and not ticker:
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_insider_query and not ticker:
         return
 
     print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}'", flush=True)
@@ -265,8 +266,10 @@ def process_incoming_message(message):
     try:
         if is_trades_query:
             reply = format_active_trades()
-        elif is_pelosi_query:
-            reply = format_pelosi_trades()
+        elif is_insider_query:
+            # אם צוין טיקר בשאלה לוקח אותו, אחרת ברירת מחדל NVDA
+            query_ticker = ticker if ticker else "NVDA"
+            reply = format_insiders_report(query_ticker)
         elif ticker:
             reply = analyze_and_format(ticker)
         else:
@@ -284,7 +287,7 @@ def process_incoming_message(message):
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
 
-@bot.message_handler(commands=['trades', 'pelosi'])
+@bot.message_handler(commands=['trades', 'pelosi', 'insiders'])
 def handle_commands(message):
     process_incoming_message(message)
 
@@ -300,12 +303,11 @@ if __name__ == "__main__":
     t = threading.Thread(target=start_health_server, daemon=True)
     t.start()
     
-    # ניקוי חיבורים קודמים ומניעת שגיאות 409
     try:
         bot.remove_webhook()
     except Exception:
         pass
-    time.sleep(3)
+    time.sleep(2)
 
     print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות + ערוצים)", flush=True)
     
@@ -314,7 +316,7 @@ if __name__ == "__main__":
             bot.infinity_polling(timeout=20, long_polling_timeout=15)
         except telebot.apihelper.ApiTelegramException as e:
             if "409" in str(e):
-                print("[409 Conflict Detected] ממתין 5 שניות לסגירת מופע מתחרה...", flush=True)
+                print("[409 Conflict Detected] ממתין 5 שניות...", flush=True)
                 time.sleep(5)
             else:
                 time.sleep(2)
