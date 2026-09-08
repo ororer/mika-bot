@@ -31,6 +31,7 @@ MARKET_CACHE = {}
 CACHE_TTL = 300
 PROCESSED_MESSAGES = set()
 
+# מילון טיקרים מורחב למניעת זליגה לשיחות חולין
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
     "אפל": "AAPL",
@@ -42,7 +43,15 @@ HEBREW_TICKERS = {
     "מטא": "META",
     "מיקרון": "MU",
     "נביוס": "NBIS",
-    "טראמפ": "DJT"
+    "טראמפ": "DJT",
+    "סוקסל": "SOXL",
+    "ספיי": "SPY",
+    "קיו": "QQQ",
+    "טריפל": "TQQQ",
+    "נטפליקס": "NFLX",
+    "סנופי": "SPY",
+    "נסדק": "QQQ",
+    "נאסדק": "QQQ"
 }
 
 def start_health_server():
@@ -107,7 +116,6 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # סינון שאלות על אישים שלא יפורשו בטעות כמניה
     smart_tokens = ["אקמן", "קאתי", "קאת'י", "קטי", "ווד", "הואנג", "ג'נסן", "דליו", "טראמפ", "פלוסי", "ארק", "arkk"]
     if any(k in clean_text.lower() for k in smart_tokens):
         return None
@@ -257,7 +265,6 @@ def process_incoming_message(message):
         pass
 
     try:
-        # סדר עדיפויות מוגדר היטב
         if is_trades_query:
             reply = format_active_trades()
         elif is_smart_money:
