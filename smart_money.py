@@ -6,40 +6,71 @@ INSIDERS_DIRECTORY = {
         "name": "ביל אקמן (Pershing Square)",
         "ticker": "PSHZF",
         "type": "fund",
-        "core_holdings": "Alphabet (GOOGL), Chipotle (CMG), Hilton (HLT), Howard Hughes (HHH)",
-        "description": "קרן Pershing Square מתמקדת בריכוז גבוה של 8-10 חברות ענק איכותיות עם מודל עסקי צפוי וחפיר עמוק."
+        "core_holdings": [
+            "Alphabet (GOOGL)",
+            "Chipotle Mexican Grill (CMG)",
+            "Hilton Worldwide (HLT)",
+            "Restaurant Brands (QSR)",
+            "Howard Hughes Holdings (HHH)"
+        ],
+        "description": "קרן Pershing Square מתמקדת בריכוז גבוה של חברות ענק איכותיות עם מודל עסקי צפוי וחפיר תחרותי עמוק."
     },
     "cathie": {
         "name": "קאת'י ווד (ARK Invest)",
         "ticker": "ARKK",
         "type": "etf",
+        "core_holdings": [
+            "Tesla (TSLA)",
+            "Roku (ROKU)",
+            "Coinbase (COIN)",
+            "Block (SQ)",
+            "Roblox (RBLX)"
+        ],
         "description": "קרן החדשנות ARKK משקיעה בחברות צמיחה משבשת, בינה מלאכותית, בלוקצ'יין ורובוטיקה."
     },
     "jensen": {
-        "name": "ג'נסן הואנג (NVIDIA)",
+        "name": "ג'נסן הואנג (מנכ\"ל NVIDIA)",
         "ticker": "NVDA",
         "type": "insider",
-        "description": "מייסד ומנכ\"ל NVIDIA - מעקב אחר דיווחי Form 4 ומימושי מניות תקופתיים (10b5-1)."
+        "core_holdings": [
+            "מניות שליטה והנהלה ב-NVIDIA (NVDA)"
+        ],
+        "description": "מעקב אחר דיווחי Form 4 ומימושי מניות תקופתיים (תוכנית 10b5-1 עיוורת)."
     },
     "dalio": {
-        "name": "ריי דליו (Bridgewater)",
+        "name": "ריי דליו (Bridgewater Associates)",
         "ticker": "SPY",
-        "type": "macro",
-        "core_holdings": "S&P 500 (SPY), שווקים מתעוררים (IEMG), זהב (GLD), אג\"ח ממשלתיות",
-        "description": "אסטרטגיית All-Weather מאקרו: פיזור גלובלי והגנה מתנודתיות מחזורי חוב."
+        "type": "fund",
+        "core_holdings": [
+            "מדד S&P 500 (SPY / IVV)",
+            "שווקים מתעוררים (IEMG)",
+            "קרן סחורות וזהב (GLD)",
+            "אג\"ח ממשלת ארה\"ב לטווח ארוך (TLT)"
+        ],
+        "description": "אסטרטגיית All-Weather מאקרו: פיזור גלובלי והגנה מתנודתיות מחזורי חוב ואינפלציה."
     },
     "trump": {
-        "name": "דונלד טראמפ (Trump Media)",
+        "name": "דונלד טראמפ (תיק נכסים וגילוי פיננסי)",
         "ticker": "DJT",
-        "type": "insider",
-        "description": "מניית סנטימנט ומומנטום פוליטי מובהק ברשת Truth Social."
+        "type": "fund",
+        "core_holdings": [
+            "Trump Media & Technology Group ($DJT) - אחזקת שליטה",
+            "נכסים דיגיטליים: ארנק קריפטו (Ethereum / WETH) ומיזם World Liberty Financial",
+            "השקעות שוק והון נזיל: קרנות מדד S&P 500 ואג\"ח ממשלת ארה\"ב"
+        ],
+        "description": "התיק מבוסס על דוחות הגילוי הפיננסי הרשמיים (OGE Form 278e) ומשלב מדיה, נדל\"ן ונכסי קריפטו."
     },
     "pelosi": {
         "name": "ננסי פלוסי (דיווחי קונגרס)",
         "ticker": "NVDA",
-        "type": "congress",
-        "core_holdings": "NVIDIA (NVDA), Broadcom (AVGO), Apple (AAPL), Microsoft (MSFT)",
-        "description": "התמקדות באופציות Deep In-The-Money Call לטווח ארוך (LEAPS) בענקיות השבבים."
+        "type": "fund",
+        "core_holdings": [
+            "NVIDIA (NVDA) - אופציות Call עמוקות (LEAPS)",
+            "Broadcom (AVGO)",
+            "Apple (AAPL)",
+            "Microsoft (MSFT)"
+        ],
+        "description": "מעקב אחר חוק ה-STOCK Act: התמקדות באופציות Deep In-The-Money לטווח ארוך בענקיות הטכנולוגיה."
     }
 }
 
@@ -58,29 +89,6 @@ def get_insider_key(text: str) -> str:
     if any(k in t for k in ["פלוסי", "pelosi"]):
         return "pelosi"
     return "cathie"
-
-def get_etf_holdings(ticker_symbol: str) -> str:
-    """שולף את האחזקות המובילות מ-yfinance אם זמין"""
-    try:
-        t = yf.Ticker(ticker_symbol)
-        # ניסיון שליפת טבלת אחזקות מובנית
-        holdings = getattr(t, "funds_data", None)
-        if holdings and hasattr(holdings, "top_holdings"):
-            df = holdings.top_holdings
-            if df is not None and not df.empty:
-                lines = []
-                for _, row in df.head(5).iterrows():
-                    sym = row.get("Holding", row.get("Symbol", ""))
-                    pct = row.get("Holding Percent", "")
-                    lines.append(f"• {sym} ({pct})")
-                return "\n".join(lines)
-    except Exception:
-        pass
-    
-    # אחזקות ליבה מובילות ומעודכנות עבור ARKK כגיבוי מדויק
-    if ticker_symbol == "ARKK":
-        return "• Tesla (TSLA)\n• Roku (ROKU)\n• Coinbase (COIN)\n• Block (SQ)\n• Roblox (RBLX)"
-    return ""
 
 def fetch_insider_trades(ticker_symbol: str, limit: int = 3) -> list:
     trades = []
@@ -134,18 +142,16 @@ def format_smart_money_summary(query_text: str = "") -> str:
         f"ℹ️ {profile['description']}\n"
     ]
 
-    # אם מדובר בקרן / ETF (כמו קאת'י ווד או אקמן) מציגים את האחזקות
-    if prof_type in ["etf", "fund", "macro", "congress"]:
-        lines.append("📊 **פוזיציות ואחזקות מובילות בתיק:**")
-        etf_data = get_etf_holdings(target_ticker)
-        if etf_data:
-            lines.append(etf_data)
-        elif "core_holdings" in profile:
-            lines.append(f"• {profile['core_holdings']}")
+    # הצגת אחזקות הליבה
+    holdings = profile.get("core_holdings", [])
+    if holdings:
+        lines.append("📊 **פוזיציות ואחזקות מובילות:**")
+        for h in holdings:
+            lines.append(f"• {h}")
         lines.append("")
 
-    # משיכת פעולות אחרונות של בכירים אם מדובר במניה ספציפית
-    if prof_type in ["insider", "congress"]:
+    # אם מדובר בחברה עם עסקאות בכירים (כמו NVDA של ג'נסן)
+    if prof_type == "insider":
         trades = fetch_insider_trades(target_ticker, limit=3)
         if trades:
             lines.append("📋 **דיווחים רשמיים אחרונים בחברה:**")
