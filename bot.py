@@ -6,15 +6,29 @@ import http.server
 import socketserver
 import telebot
 import yfinance as yf
+from supabase import create_client, Client
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
-from db import get_active_trades, get_trade_history
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN אינו מוגדר.")
 
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# חיבור ל-Supabase
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+supabase: Client = None
+
+if SUPABASE_URL and SUPABASE_KEY:
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("[Supabase] התחברות למסד הנתונים בוצעה בהצלחה.", flush=True)
+    except Exception as e:
+        print(f"[Supabase Error] שגיאה בחיבור למסד הנתונים: {e}", flush=True)
+else:
+    print("[Supabase Warning] SUPABASE_URL או SUPABASE_KEY לא הוגדרו.", flush=True)
 
 BOT_USERNAME = ""
 BOT_ID = None
@@ -63,42 +77,6 @@ def normalize_text(text: str) -> str:
         return ""
     return text.replace("’", "'").replace("`", "'").replace("״", '"')
 
-def format_active_trades() -> str:
-    trades = get_active_trades()
-    if not trades:
-        return "💼 כרגע אין עסקאות פעילות בתיק. השולחן נקי, אנחנו על הגדר ומחכים לסטאפ מנצח לפי הפלייבוק!"
-
-    response_lines = ["💼 *סטטוס עסקאות פעילות (Chip Swing Portfolio):*\n"]
-    for t in trades:
-        ticker = t.get("ticker", "")
-        entry_price = float(t.get("entry_price", 0))
-        stop_loss = float(t.get("stop_loss", 0))
-        target_price = t.get("target_price")
-        target_str = f"{float(target_price):.2f}$" if target_price else "פתוח"
-
-        # בדיקת מחיר חי דרך yfinance
-        curr_price = entry_price
-        pnl_pct = 0.0
-        try:
-            live_data = yf.Ticker(ticker).history(period="1d")
-            if not live_data.empty:
-                curr_price = float(live_data["Close"].iloc[-1])
-                pnl_pct = ((curr_price - entry_price) / entry_price) * 100
-        except Exception:
-            pass
-
-        sign = "+" if pnl_pct >= 0 else ""
-        icon = "🟢" if pnl_pct >= 0 else "🔴"
-
-        response_lines.append(
-            f"{icon} *{ticker}* | מחיר נוכחי: {curr_price:.2f}$ ({sign}{pnl_pct:.2f}%)\n"
-            f"   • כניסה: {entry_price:.2f}$ | סטופ: {stop_loss:.2f}$ | יעד: {target_str}\n"
-            f"   • סטאפ: {t.get('setup_type', 'Breakout')} | נכנס בתאריך: {t.get('entry_date')}\n"
-        )
-
-    response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
-    return "\n".join(response_lines)
-
 def extract_ticker(text: str):
     clean_text = normalize_text(text)
     if BOT_USERNAME:
@@ -117,13 +95,44 @@ def extract_ticker(text: str):
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "PORTFOLIO"
     }
 
     for word in words:
         if word not in ignored:
             return word
     return None
+
+def get_portfolio_summary() -> str:
+    if not supabase:
+        return "חיבור מסד הנתונים אינו מוגדר כרגע."
+
+    try:
+        response = supabase.table("active_trades").select("*").execute()
+        trades = response.data
+
+        if not trades:
+            return "💼 **תיק המסחר של צ'יפ:**\nכרגע אין עסקאות פתוחות בתיק. אנחנו סבלניים, יושבים על הגדר וממתינים לתבנית מדויקת לפי הפלייבוק!"
+
+        lines = ["💼 **דוח תיק - פוזיציות פתוחות:**\n"]
+        for trade in trades:
+            ticker = trade.get("ticker")
+            entry = float(trade.get("entry_price", 0))
+            current = float(trade.get("current_price", entry))
+            stop = float(trade.get("stop_loss", 0))
+            pnl = ((current - entry) / entry) * 100 if entry > 0 else 0
+            pnl_sign = "+" if pnl >= 0 else ""
+
+            lines.append(
+                f"🔹 **{ticker}**\n"
+                f"  • כניסה: {entry:.2f}$ | נוכחי: {current:.2f}$ ({pnl_sign}{pnl:.2f}%)\n"
+                f"  • סטופ לוס: {stop:.2f}$\n"
+            )
+
+        lines.append("🛡️ זכרו: לא מזיזים סטופים למטה לעולם. ניהול סיכונים קודם לכל.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"שגיאה בשליפת נתוני תיק: {e}"
 
 def analyze_and_format(ticker_symbol: str) -> str:
     now = time.time()
@@ -162,6 +171,25 @@ def analyze_and_format(ticker_symbol: str) -> str:
     except Exception as e:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
+@bot.message_handler(commands=['start', 'help'])
+@bot.channel_post_handler(commands=['start', 'help'])
+def send_welcome(message):
+    bot.reply_to(
+        message,
+        "אהלן! אני צ'יפ 🤖📊\n"
+        "הסיידקיק שלכם לניתוח טכני וסווינג לפי הפלייבוק.\n\n"
+        "מה אפשר לעשות איתי?\n"
+        "• שאלו אותי על מניה (למשל: 'מה עם אפל?', 'NVDA', '$TSLA')\n"
+        "• בדקו מצב תיק עם הפקודה /portfolio או שאלו 'מה הטריידים הפתוחים?'\n"
+        "• דברו איתי חופשי בערוץ ובקבוצה!"
+    )
+
+@bot.message_handler(commands=['portfolio'])
+@bot.channel_post_handler(commands=['portfolio'])
+def handle_portfolio_command(message):
+    reply = get_portfolio_summary()
+    bot.reply_to(message, reply)
+
 def process_incoming_message(message):
     if getattr(message, 'is_automatic_forward', False):
         return
@@ -196,13 +224,14 @@ def process_incoming_message(message):
     elif any(k in normalized.lower() for k in ["צ'יפ", "ציפ", "chip"]):
         is_mentioned = True
 
-    # בדיקה ישירה לפקודת עסקאות פתוחות
-    is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
+    # בדיקה האם המשתמש שואל על התיק או הפוזיציות
+    portfolio_keywords = ["פוזיציות", "תיק", "עסקאות פתוחות", "טריידים פתוחים", "portfolio"]
+    is_portfolio_query = any(k in normalized.lower() for k in portfolio_keywords)
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query:
-        ticker = extract_ticker(user_text)
-        if not ticker:
-            return
+    ticker = extract_ticker(user_text)
+
+    if not is_private and not ticker and not is_reply_to_bot and not is_mentioned and not is_portfolio_query:
+        return
 
     try:
         bot.send_chat_action(chat_id, 'typing')
@@ -210,26 +239,20 @@ def process_incoming_message(message):
         pass
 
     try:
-        if is_trades_query:
-            reply = format_active_trades()
+        if is_portfolio_query:
+            reply = get_portfolio_summary()
+        elif ticker:
+            reply = analyze_and_format(ticker)
         else:
-            ticker = extract_ticker(user_text)
-            if ticker:
-                reply = analyze_and_format(ticker)
-            else:
-                clean_text = normalized
-                if BOT_USERNAME:
-                    clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
-                clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
-                reply = get_mentor_chat_reply(clean_text or normalized)
+            clean_text = normalized
+            if BOT_USERNAME:
+                clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
+            reply = get_mentor_chat_reply(clean_text or normalized)
 
-        bot.reply_to(message, reply, parse_mode="Markdown")
+        bot.reply_to(message, reply)
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
-
-@bot.message_handler(commands=['trades'])
-def handle_trades_command(message):
-    process_incoming_message(message)
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
