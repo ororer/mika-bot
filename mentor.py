@@ -7,12 +7,11 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# רשימת מודלים לפי סדר עדיפות לעמידות מקסימלית
+# רשימת מודלים רשמיים, מהירים ונתמכים בלבד
 CANDIDATE_MODELS = [
-    "gemini-2.5-flash",
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
-    "gemini-pro"
+    "gemini-1.5-pro"
 ]
 
 SYSTEM_INSTRUCTION = """
