@@ -9,7 +9,7 @@ import yfinance as yf
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
 from db import get_active_trades, get_trade_history
-from smart_money import fetch_insider_trades
+from smart_money import format_smart_money_summary
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
@@ -41,7 +41,8 @@ HEBREW_TICKERS = {
     "מייקרוסופט": "MSFT",
     "מטא": "META",
     "מיקרון": "MU",
-    "נביוס": "NBIS"
+    "נביוס": "NBIS",
+    "טראמפ": "DJT"
 }
 
 def start_health_server():
@@ -100,51 +101,38 @@ def format_active_trades() -> str:
     response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
     return "\n".join(response_lines)
 
-def format_insiders_report(target_ticker: str = "NVDA") -> str:
-    trades = fetch_insider_trades(target_ticker, limit=4)
-    if not trades:
-        return f"לא נמצאו דיווחי בעלי עניין עדכניים עבור {target_ticker}."
-
-    lines = [f"🏛️ דיווחי בעלי עניין ובכירים (Smart Money - {target_ticker}):\n"]
-    for t in trades:
-        lines.append(
-            f"• {t['insider']} ({t['position']})\n"
-            f"  פעולה: {t['type']} | כמות מניות: {t['shares']} | שווי: {t['value']}\n"
-            f"  תאריך: {t['date']}\n"
-        )
-    return "\n".join(lines)
-
 def extract_ticker(text: str):
     clean_text = normalize_text(text)
     if BOT_USERNAME:
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # 1. Cashtag ($AAPL)
+    # 1. Cashtags ($NVDA)
     cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtags:
         return cashtags[0].upper()
 
-    # 2. מיפוי עברי
-    for heb_name, ticker in HEBREW_TICKERS.items():
-        if heb_name in clean_text:
-            return ticker
-
-    # 3. מילות שיחה ופקודות
+    # 2. מילות שיחה ופקודות
     chat_phrases = [
         "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
         "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
-        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "/insiders"
+        "מה דעתך", "איך לפעול", "מה לעשות", "/pelosi", "/trades", "/insiders", "/smartmoney",
+        "/ackman", "/cathie", "/jensen", "/trump"
     ]
     if any(p in clean_text for p in chat_phrases):
         return None
+
+    # 3. מילון שמות עברי
+    for heb_name, ticker in HEBREW_TICKERS.items():
+        if heb_name in clean_text:
+            return ticker
 
     # 4. מילים באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES", "PELOSI", "INSIDERS"
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
     }
     filtered = [w for w in words if w not in ignored]
     if len(filtered) == 1 and len(clean_text.split()) <= 3:
@@ -249,11 +237,17 @@ def process_incoming_message(message):
         is_mentioned = True
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
-    is_insider_query = any(cmd in normalized.lower() for cmd in ["/insiders", "/pelosi", "בעלי עניין", "אינסיידרים"])
+    
+    # בדיקת מילות מפתח לשמות המוסדיים
+    smart_money_keywords = [
+        "/smartmoney", "/pelosi", "/ackman", "/cathie", "/jensen", "/trump",
+        "פלוסי", "אקמן", "קאת'י", "קאתי", "ג'נסן", "גנסן", "דליו", "טראמפ", "מוסדיים", "בעלי עניין"
+    ]
+    is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_keywords)
 
     ticker = extract_ticker(user_text)
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_insider_query and not ticker:
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker:
         return
 
     print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}'", flush=True)
@@ -266,10 +260,8 @@ def process_incoming_message(message):
     try:
         if is_trades_query:
             reply = format_active_trades()
-        elif is_insider_query:
-            # אם צוין טיקר בשאלה לוקח אותו, אחרת ברירת מחדל NVDA
-            query_ticker = ticker if ticker else "NVDA"
-            reply = format_insiders_report(query_ticker)
+        elif is_smart_money:
+            reply = format_smart_money_summary(normalized)
         elif ticker:
             reply = analyze_and_format(ticker)
         else:
@@ -287,7 +279,7 @@ def process_incoming_message(message):
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
 
-@bot.message_handler(commands=['trades', 'pelosi', 'insiders'])
+@bot.message_handler(commands=['trades', 'pelosi', 'smartmoney', 'ackman', 'cathie', 'jensen', 'trump'])
 def handle_commands(message):
     process_incoming_message(message)
 
@@ -316,7 +308,6 @@ if __name__ == "__main__":
             bot.infinity_polling(timeout=20, long_polling_timeout=15)
         except telebot.apihelper.ApiTelegramException as e:
             if "409" in str(e):
-                print("[409 Conflict Detected] ממתין 5 שניות...", flush=True)
                 time.sleep(5)
             else:
                 time.sleep(2)
