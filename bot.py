@@ -107,22 +107,27 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # 1. Cashtags ($NVDA)
+    # סינון שאלות על אישים שלא יפורשו בטעות כמניה
+    smart_tokens = ["אקמן", "קאתי", "קאת'י", "קטי", "ווד", "הואנג", "ג'נסן", "דליו", "טראמפ", "פלוסי", "ארק", "arkk"]
+    if any(k in clean_text.lower() for k in smart_tokens):
+        return None
+
     cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtags:
         return cashtags[0].upper()
 
-    # 2. סינון שאלות מוסדיים שלא יזוהו בטעות כמניה
-    smart_tokens = ["אקמן", "קאתי", "קאת'י", "קטי", "ווד", "הואנג", "ג'נסן", "דליו", "טראמפ", "פלוסי"]
-    if any(k in clean_text.lower() for k in smart_tokens):
+    chat_phrases = [
+        "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
+        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
+        "מה דעתך", "איך לפעול", "מה לעשות"
+    ]
+    if any(p in clean_text for p in chat_phrases):
         return None
 
-    # 3. מילון שמות עברי
     for heb_name, ticker in HEBREW_TICKERS.items():
         if heb_name in clean_text:
             return ticker
 
-    # 4. מילים באנגלית
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
@@ -233,10 +238,9 @@ def process_incoming_message(message):
 
     is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
     
-    # זיהוי חזק של Smart Money (כולל כל וריאציות הכתיב בעברית)
     smart_money_triggers = [
         "/smartmoney", "/pelosi", "/ackman", "/cathie", "/jensen", "/trump",
-        "פלוסי", "אקמן", "קאת'י", "קאתי", "קטי", "ווד", "ג'נסן", "גנסן", "דליו", "טראמפ", "מוסדיים", "מחזיקה", "מחזיק"
+        "פלוסי", "אקמן", "קאת'י", "קאתי", "קטי", "ווד", "ג'נסן", "גנסן", "דליו", "טראמפ", "מוסדיים", "מחזיקה", "מחזיק", "arkk"
     ]
     is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_triggers)
 
@@ -253,6 +257,7 @@ def process_incoming_message(message):
         pass
 
     try:
+        # סדר עדיפויות מוגדר היטב
         if is_trades_query:
             reply = format_active_trades()
         elif is_smart_money:
