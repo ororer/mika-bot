@@ -1,90 +1,74 @@
 import os
-from datetime import datetime
-import pytz
 import google.generativeai as genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    # transport='rest' קריטי למניעת שגיאות gRPC 504 ב-Render
-    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY אינו מוגדר.")
 
-MODEL_NAME = "models/gemini-3.5-flash-lite"
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-SYSTEM_INSTRUCTION = """
-אתה צ'יפ, מנטור סווינג טכני ישראלי חד, מקצועי, שקול ושנון המלווה קהילת סוחרים.
-
-כללי שפה וניסוח קשיחים:
-1. עברית בלבד: כתוב בעברית ישראלית טבעית, שוטפת, רהוטה וללא שגיאות.
-2. איסור תעתיק עילג: אל תנסה לכתוב מילים מאנגלית באותיות עבריות בצורה משובשת (אסור לכתוב "קאש", "קפיטל", "סטאפים"). השתמש בעברית טבעית: "מזומן", "הון", "תבנית / תוכנית עבודה".
-3. מונחים מקצועיים באנגלית: אם משתמשים במונח טכני, כתוב אותו באנגלית תקינה (למשל: Breakout, Setup, Stop Loss, Cash, Pullback, Divergence).
-4. גישת מסחר: דגש על משמעת ברזל, סבלנות, שמירה על ההון וישיבה ממושמעת על הגדר כשאין תבנית ברורה לפלייבוק.
-5. תמציתיות: תשובות ממוקדות וקצרות (1-2 פסקאות בלבד).
+SYSTEM_PROMPT = """
+אתה צ'יפ, מנטור מקצועי למסחר סווינג בבורסה האמריקאית. 
+האופי שלך: אתה ממוקד, ענייני, טכני מאוד. אתה לא מטיף מוסר ולא מזלזל במשתמש. המטרה שלך היא ללמד ולתת תובנות פרקטיות מבוססות נתונים.
+חוקי הברזל שלך למתן תשובות:
+1. אל תענה תשובות ארוכות ומתחכמות. תן שורת תחתית פרקטית.
+2. ניתוח מניות מתבסס תמיד על תבנית VCP (התכווצות תנודתיות ומחזורים), מחזורי מסחר (RVOL), וממוצעים נעים (150 ו-200).
+3. קביעת Stop Loss: סטופ תמיד נקבע טכנית מתחת לנר הפריצה או מתחת לרמת התמיכה/הפגיעה האחרונה בגרף. אל תתן הרצאות על ניהול סיכונים כללי - תן הנחיה טכנית כיצד לחפש את הסטופ בגרף.
+4. חוסר בנתונים: אם שואלים אותך על מניה אבל אין לך נתונים טכניים עליה (כי המשתמש לא ציין את שם הטיקר באנגלית עם $), אל תנסה להמציא ואל תנזוף בו באריכות. פשוט ענה קצר: "חסר לי הטיקר. תכתוב לי את סמל המניה כדי שאוכל להריץ ניתוח ולראות את הגרף."
+השפה שלך: עברית טבעית וברורה, ללא שגיאות.
 """
-
-def get_current_market_context() -> str:
-    tz_ny = pytz.timezone("America/New_York")
-    now_ny = datetime.now(tz_ny)
-    day_name = now_ny.strftime("%A")
-    date_str = now_ny.strftime("%Y-%m-%d")
-    time_str = now_ny.strftime("%H:%M")
-    return f"תאריך היום (שעון ניו יורק): {date_str} ({day_name}), שעה: {time_str}"
-
-def call_gemini(prompt: str) -> str:
-    if not GEMINI_API_KEY:
-        return "מפתח ה-API של Gemini אינו מוגדר בסביבה."
-
-    try:
-        model = genai.GenerativeModel(
-            model_name=MODEL_NAME,
-            system_instruction=SYSTEM_INSTRUCTION
-        )
-        response = model.generate_content(prompt)
-        if response and response.text:
-            return response.text.strip()
-        return "לא התקבלה תשובה מהמודל."
-    except Exception as e:
-        return f"צ'יפ כאן: תקלת תקשורת מול ה-AI ({e})."
 
 def get_mentor_analysis(ticker: str, result: dict, metrics: dict) -> str:
-    context = get_current_market_context()
+    """
+    מקבל את הנתונים הטכניים מ-PlaybookEngine ומייצר תובנה מקצועית קצרה ומדויקת.
+    """
+    setup = result.get('setup', 'לא מזוהה')
+    rsi = metrics.get('rsi', 0)
+    rvol = metrics.get('rvol', 0)
+    sma150 = metrics.get('sma150', 0)
+    close = metrics.get('close', 0)
     
-    close = metrics.get('close', 0.0)
-    sma50 = metrics.get('sma50', 0.0)
-    sma150 = metrics.get('sma150', 0.0)
-    ema10 = metrics.get('ema10', 0.0)
-    ema21 = metrics.get('ema21', 0.0)
-    rsi = metrics.get('rsi', 50.0)
-    atr = metrics.get('atr', 0.0)
-    rvol = metrics.get('rvol', 1.0)
-    structure = metrics.get('structure', 'לא זוהה')
-    divergence = metrics.get('divergence', 'ללא')
-    vcp_str = "כן (דחיסה פעילה לקראת פריצה)" if metrics.get('is_vcp') else "לא"
+    prompt = f"""
+    הנה הנתונים הטכניים שקיבלת עבור המניה {ticker}:
+    מחיר סגירה: {close}
+    ממוצע 150: {sma150}
+    RSI: {rsi}
+    מחזור יחסי (RVOL): {rvol}
+    החלטת מנוע (Setup): {setup}
+    
+    כתוב פסקת תובנה קצרה ומקצועית (עד 3-4 משפטים). התייחס לתבנית (VCP/פריצה), הסבר מה משמעות המחזור הנוכחי וה-RSI, וספק הנחיה פרקטית להמשך (איפה להציב התראה או האם יש כאן טריגר כניסה).
+    """
+    
+    try:
+        response = model.generate_content(
+            contents=[
+                {"role": "user", "parts": [SYSTEM_PROMPT + "\n\n" + prompt]}
+            ]
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"[Mentor Error] {e}")
+        return "יש לי תקלה במשיכת התובנות כרגע. תעבוד לפי הנתונים הטכניים היבשים למעלה."
 
-    prompt = f"""{context}
-נתח את מניית {ticker} לפי הנתונים הטכניים והמבניים הבאים:
-- מחיר אחרון: {close:.2f}$
-- ממוצעים ארוכים: SMA 50 ב-{sma50:.2f}$, SMA 150 ב-{sma150:.2f}$
-- ממוצעי מומנטום מהירים: EMA 10 ב-{ema10:.2f}$, EMA 21 ב-{ema21:.2f}$
-- מדד תנופה RSI (14): {rsi:.1f}
-- תנודתיות יומית ממוצעת ATR: {atr:.2f}$
-- יחס נפח מסחר (RVOL מול ממוצע 20 יום): {rvol:.2f}
-- דחיסת תנודתיות (VCP): {vcp_str}
-- מבנה מחיר: {structure}
-- סטיות מומנטום: {divergence}
-
-החלטת מנוע הפלייבוק: {result.get('status')}
-הערת פלייבוק: {result.get('message')}
-סטופ לוס מוצע (אם יש): {result.get('stop_loss', 'אין')}
-
-תן סיכום מנטור קצר, חד, בעברית רהוטה ונקייה: מה המצב הטכני הכולל (מבנה, מומנטום ונפח), האם יש תבנית איכותית לפי הפלייבוק, או שיושבים על הגדר ושומרים על המזומן.
-"""
-    return call_gemini(prompt)
-
-def get_mentor_chat_reply(user_message: str) -> str:
-    context = get_current_market_context()
-    prompt = f"""{context}
-הודעת הסוחר: "{user_message}"
-
-ענה כצ'יפ המנטור בעברית טבעית, חדה, מקצועית וישראלית. שמור על תשובה קצרה (1-2 פסקאות בלבד).
-"""
-    return call_gemini(prompt)
+def get_mentor_chat_reply(user_text: str) -> str:
+    """
+    מטפל בשיחות חולין, שאלות כלליות, או מקרים שבהם לא זוהה טיקר.
+    """
+    prompt = f"""
+    המשתמש כתב לך את ההודעה הבאה:
+    "{user_text}"
+    
+    ענה לו בהתאם לחוקי הברזל שלך (ממוקד, לא מטיף). אם הוא שואל על מניה ספציפית אבל הטיקר לא חולץ נכון, בקש ממנו את הטיקר.
+    """
+    
+    try:
+        response = model.generate_content(
+            contents=[
+                {"role": "user", "parts": [SYSTEM_PROMPT + "\n\n" + prompt]}
+            ]
+        )
+        return response.text.strip()
+    except Exception as e:
+        print(f"[Mentor Error] {e}")
+        return "אני מחוץ לפוקוס כרגע. תן לי רגע להתאפס."
