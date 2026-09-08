@@ -7,20 +7,21 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# רשימת המודלים הפעילים בחשבון לפי סדר עדיפות
+# רשימת מודלים יציבה הפועלת בכל סביבות ה-API ללא שגיאות 404
 CANDIDATE_MODELS = [
+    "gemini-1.5-flash-latest",
     "gemini-1.5-flash",
-    "gemini-1.5-pro"
+    "gemini-pro"
 ]
 
 SYSTEM_INSTRUCTION = """
-אתה 'צ'יפ' (Chip) – מנטור וסיידקיק מקצועי, חד, כריזמטי ושנון למסחר סווינג טכני, המלווה קהילת סוחרים.
+אתה צ'יפ, מנטור סווינג טכני ושנון המלווה קהילת סוחרים.
 העקרונות שלך:
-1. שפה: עברית טבעית, זורמת ומקצועית (סלנג סוחרים איכותי).
-2. מונחים טכניים: מותר ורצוי להשתמש במונחים מקצועיים באנגלית או עברית (כגון RSI, SMA 150, Stop Loss, Breakout, Pullback, Ticker). לעולם אל תעיר על השפה שבה המונח כתוב, ואל תתווכח על כללי תרגום.
-3. פילוסופיית מסחר: הגנה על הכסף קודמת לרווח, קטיעת הפסדים מהירה, כניסה רק לפי תבניות איכותיות, סבלנות וישיבה על הגדר כשאין מהלך מובהק.
-4. ידע כללי ולוח מסחר: אתה מודע לתאריך הנוכחי, לשעות המסחר בארה"ב (שעון ניו יורק) ולחגים שבהם הבורסה סגורה (כגון Labor Day, Memorial Day, 4th of July, Thanksgiving וכו'). אם שואלים למה אין מסחר, נמק במדויק.
-5. אורך התשובה: תמציתי, חד ולעניין (פסקה עד שתיים מקסימום).
+1. שפה עברית טבעית, זורמת ומקצועית (סלנג סוחרים איכותי).
+2. שמור על המשפה שבה המונח כתוב, ואל תתווכח על כללי תרגום.
+3. שמירה על משמעת, סבלנות וישיבה על הגדר כשאין מהלך מובהק.
+4. אם שואלים למה אין מסחר, נמק במדויק.
+5. תשובות תמציתיות, חדות ולעניין (פסקה עד שתיים מקסימום).
 """
 
 def get_current_market_context() -> str:
@@ -29,13 +30,13 @@ def get_current_market_context() -> str:
     day_name = now_ny.strftime("%A")
     date_str = now_ny.strftime("%Y-%m-%d")
     time_str = now_ny.strftime("%H:%M")
-    return f"תאריך היום (שעון ניו יורק): {date_str}, יום: {day_name}, שעה: {time_str}."
+    return f"תאריך היום (שעון ניו יורק): {date_str} ({day_name}), שעה: {time_str}"
 
 def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY:
-        return "מפתח ה-API של Gemini אינו מוגדר."
+        return "מפתח ה-API של Gemini אינו מוגדר בסביבה."
 
-    last_error = None
+    last_error = ""
     for model_name in CANDIDATE_MODELS:
         try:
             model = genai.GenerativeModel(
@@ -46,48 +47,32 @@ def call_gemini(prompt: str) -> str:
             if response and response.text:
                 return response.text.strip()
         except Exception as e:
-            last_error = e
+            last_error = str(e)
             continue
 
-    raise RuntimeError(f"כל המודלים נכשלו. שגיאה אחרונה: {last_error}")
+    return f"צ'יפ כאן: יש כרגע עומס בתקשורת מול ה-AI ({last_error}). נחזור לפעילות מלאה בהקדם!"
 
-def get_mentor_analysis(ticker: str, engine_result: dict, price: float, rsi: float, sma150: float) -> str:
-    if not GEMINI_API_KEY:
-        status = engine_result.get("status", "WAIT")
-        return f"מצב מנוע: {status}. מחיר: {price:.2f}$, ממוצע 150: {sma150:.2f}$, RSI: {rsi:.1f}."
-
+def get_mentor_analysis(ticker: str, result: dict, last_price: float, rsi: float, sma150: float) -> str:
     context = get_current_market_context()
     prompt = f"""
-הקשר זמן: {context}
+{context}
+נתח את מניית {ticker} לפי הנתונים הבאים:
+- מחיר אחרון: {last_price:.2f}$
+- ממוצע נע 150: {sma150:.2f}$
+- מדד RSI (14): {rsi:.1f}
+- החלטת מנוע הפלייבוק: {result.get('status')}
+- פרטי סטאפ: {result.get('details', 'אין פירוט נוסף')}
 
-נתח בקצרה את מניית {ticker} על בסיס הנתונים הטכניים הבאים:
-- החלטת מנוע הפלייבוק: {engine_result.get('status')}
-- מחיר אחרון: {price:.2f}$
-- ממוצע נע 150 יום: {sma150:.2f}$
-- מדד RSI: {rsi:.1f}
-- פרטים נוספים: {engine_result.get('reason', 'ללא הערות מיוחדות')}
-
-תן סקירת מנטור קצרה, שנונה ומדויקת בסגנון צ'יפ: האם יש כאן הזדמנות לפי הפלייבוק, למה לשים לב, והיכן הסיכון. שמור על תשובה ממוקדת בעברית.
+תן סיכום מנטור קצר, חד ושנון בסגנון צ'יפ: האם יש כאן מהלך, לשבת על הגדר, או לשמור על משמעת.
 """
-    try:
-        return call_gemini(prompt)
-    except Exception as e:
-        return f"צ'יפ כאן: המנוע מראה {engine_result.get('status')}. מחיר סביב {price:.2f}$, ממוצע 150 ב-{sma150:.2f}$, RSI ב-{rsi:.1f}. ({e})"
+    return call_gemini(prompt)
 
 def get_mentor_chat_reply(user_message: str) -> str:
-    if not GEMINI_API_KEY:
-        return "אהלן! אני כאן, שאל אותי על כל טיקר או מושג טכני."
-
     context = get_current_market_context()
     prompt = f"""
-הקשר זמן נוכחי: {context}
+{context}
+הודעת המשתמש: "{user_message}"
 
-הודעה מחבר קהילה:
-"{user_message}"
-
-השב לו בקצרה, בביטחון, בהומור קל ובמקצועיות בתור צ'יפ המנטור. אם הוא שואל לגבי מסחר היום או זמנים, התבסס על התאריך והשעה בניו יורק כדי לענות במדויק.
+ענה כצ'יפ המנטור בשפה חופשית, תמציתית, מקצועית ומלאת ביטחון. שמור על תשובה קצרה (1-2 פסקאות).
 """
-    try:
-        return call_gemini(prompt)
-    except Exception as e:
-        return f"שומע אותך! יש כרגע עומס קל בחיבור: {e}"
+    return call_gemini(prompt)
