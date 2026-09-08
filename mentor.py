@@ -5,23 +5,18 @@ import google.generativeai as genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    # transport='rest' מונע שגיאות gRPC 504 Deadline Exceeded בסביבות ענן כמו Render
+    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
 
-# המודלים הנתמכים והמומלצים רשמית על ידי ה-API של גוגל בחשבונך
-CANDIDATE_MODELS = [
-    "models/gemini-3.5-flash-lite",
-    "models/gemini-3.5-flash",
-    "models/gemini-3.8-flash"
-]
+MODEL_NAME = "models/gemini-3.5-flash-lite"
 
 SYSTEM_INSTRUCTION = """
-אתה צ'יפ, מנטור סווינג טכני ושנון המלווה קהילת סוחרים.
-העקרונות שלך:
-1. שפה עברית טבעית, זורמת ומקצועית (סלנג סוחרים איכותי).
-2. שמור על המשמעות המקצועית, חדה ומדויקת.
-3. שמירה על משמעת, סבלנות וישיבה על הגדר כשאין מהלך מובהק לפי הפלייבוק.
-4. אם שואלים למה אין מסחר, נמק במדויק.
-5. תשובות תמציתיות, חדות ולעניין (פסקה עד שתיים מקסימום).
+אתה צ'יפ, מנטור סווינג טכני מקצועי, חד ושנון שמלווה קהילת סוחרים ישראלית.
+עקרונות חובה לתשובות שלך:
+1. שפה ועברית: הקפד על עברית ישראלית טבעית ותקנית, נטולת שגיאות כתיב או תרגומים עילגים. כתוב בצורה שוטפת ובגובה העיניים (סלנג סוחרים איכותי ומקצועי).
+2. טיקרים ומונחים: השתמש בטיקר המדויק באנגלית כפי שהמשתמש ציין (למשל NBIS עבור נביוס). אל תמציא טיקרים אחרים.
+3. פילוסופיית מסחר: שמירה אדוקה על ניהול סיכונים, משמעת ברזל, סטופ לוס מוגדר מראש וסבלנות לשבת על הגדר כשאין סטאפ מובהק לפי הפלייבוק.
+4. סגנון: תשובות קצרות, תמציתיות, חדות ולעניין (פסקה עד שתיים מקסימום). ללא מריחות.
 """
 
 def get_current_market_context() -> str:
@@ -36,34 +31,30 @@ def call_gemini(prompt: str) -> str:
     if not GEMINI_API_KEY:
         return "מפתח ה-API של Gemini אינו מוגדר בסביבה."
 
-    last_error = ""
-    for model_name in CANDIDATE_MODELS:
-        try:
-            model = genai.GenerativeModel(
-                model_name=model_name,
-                system_instruction=SYSTEM_INSTRUCTION
-            )
-            response = model.generate_content(prompt, request_options={"timeout": 15})
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    return f"צ'יפ כאן: תקלת תקשורת מול ה-AI ({last_error})."
+    try:
+        model = genai.GenerativeModel(
+            model_name=MODEL_NAME,
+            system_instruction=SYSTEM_INSTRUCTION
+        )
+        response = model.generate_content(prompt)
+        if response and response.text:
+            return response.text.strip()
+        return "לא התקבלה תשובה מהמודל."
+    except Exception as e:
+        return f"צ'יפ כאן: תקלת תקשורת מול ה-AI ({e})."
 
 def get_mentor_analysis(ticker: str, result: dict, last_price: float, rsi: float, sma150: float) -> str:
     context = get_current_market_context()
     prompt = f"""
 {context}
-נתח את מניית {ticker} לפי הנתונים הבאים:
+נתח את מניית {ticker} לפי הנתונים הטכניים הבאים:
 - מחיר אחרון: {last_price:.2f}$
 - ממוצע נע 150: {sma150:.2f}$
 - מדד RSI (14): {rsi:.1f}
 - החלטת מנוע הפלייבוק: {result.get('status')}
 - פרטי סטאפ: {result.get('details', 'אין פירוט נוסף')}
 
-תן סיכום מנטור קצר, חד ושנון בסגנון צ'יפ: האם יש כאן מהלך, לשבת על הגדר, או לשמור על משמעת.
+תן סיכום מנטור קצר, חד, בעברית רהוטה וטבעית: מה התובנה על הנייר, האם יש סטאפ לפלייבוק, או שיושבים על הגדר ושומרים על הכסף.
 """
     return call_gemini(prompt)
 
@@ -71,8 +62,8 @@ def get_mentor_chat_reply(user_message: str) -> str:
     context = get_current_market_context()
     prompt = f"""
 {context}
-הודעת המשתמש: "{user_message}"
+הודעת הסוחר: "{user_message}"
 
-ענה כצ'יפ המנטור בשפה חופשית, תמציתית, מקצועית ומלאת ביטחון. שמור על תשובה קצרה (1-2 פסקאות).
+ענה כצ'יפ המנטור בעברית תקנית, טבעית, חדה ומקצועית. שמור על תשובה קצרה וממוקדת (1-2 פסקאות בלבד).
 """
     return call_gemini(prompt)
