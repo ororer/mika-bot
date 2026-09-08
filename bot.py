@@ -27,11 +27,9 @@ try:
 except Exception as e:
     print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
-MARKET_CACHE = {}
-CACHE_TTL = 300
 PROCESSED_MESSAGES = set()
+USER_LAST_TICKER = {}
 
-# מילון טיקרים מורחב למניעת זליגה לשיחות חולין
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
     "אפל": "AAPL",
@@ -148,13 +146,7 @@ def extract_ticker(text: str):
 
     return None
 
-def analyze_and_format(ticker_symbol: str) -> str:
-    now = time.time()
-    if ticker_symbol in MARKET_CACHE:
-        cached = MARKET_CACHE[ticker_symbol]
-        if now - cached["time"] < CACHE_TTL:
-            return cached["result"]
-
+def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
     try:
         ticker = yf.Ticker(ticker_symbol)
         df = ticker.history(period="250d", interval="1d")
@@ -172,7 +164,7 @@ def analyze_and_format(ticker_symbol: str) -> str:
         rvol = metrics.get("rvol", 1.0)
         atr = metrics.get("atr", 0.0)
 
-        mentor_text = get_mentor_analysis(ticker_symbol, result, metrics)
+        mentor_text = get_mentor_analysis(ticker_symbol, result, metrics, user_prompt)
 
         formatted_reply = (
             f"📊 צ'יפ בודק את {ticker_symbol}:\n"
@@ -182,12 +174,10 @@ def analyze_and_format(ticker_symbol: str) -> str:
             f"💡 דבר המנטור:\n"
             f"{mentor_text}"
         )
-
-        MARKET_CACHE[ticker_symbol] = {"time": now, "result": formatted_reply}
         return formatted_reply
     except Exception as e:
         print(f"[Analyze Error] {e}", flush=True)
-        return f"שגיאה בבדיקת {ticker_symbol}: {e}"
+        return f"שגיאה בבדיקת {ticker_symbol}."
 
 def safe_reply(message, text: str):
     if not text:
@@ -228,6 +218,8 @@ def process_incoming_message(message):
 
     chat_type = message.chat.type
     chat_id = message.chat.id
+    user_id = message.from_user.id if message.from_user else chat_id
+    memory_key = f"{chat_id}_{user_id}"
     normalized = normalize_text(user_text)
     is_private = (chat_type == 'private')
 
@@ -253,6 +245,18 @@ def process_incoming_message(message):
     is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_triggers)
 
     ticker = extract_ticker(user_text)
+    
+    # מנגנון הזיכרון לשאלות המשך ללא טיקר
+    if not ticker:
+        follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח"]
+        if any(w in normalized for w in follow_up_words):
+            if memory_key in USER_LAST_TICKER:
+                if time.time() - USER_LAST_TICKER[memory_key]["time"] < 300:
+                    ticker = USER_LAST_TICKER[memory_key]["ticker"]
+                    print(f"[Memory] שאלת המשך זוהתה, משתמש בטיקר {ticker}", flush=True)
+
+    if ticker:
+        USER_LAST_TICKER[memory_key] = {"ticker": ticker, "time": time.time()}
 
     if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker:
         return
@@ -270,7 +274,7 @@ def process_incoming_message(message):
         elif is_smart_money:
             reply = format_smart_money_summary(normalized)
         elif ticker:
-            reply = analyze_and_format(ticker)
+            reply = analyze_and_format(ticker, user_text)
         else:
             clean_text = normalized
             if BOT_USERNAME:
