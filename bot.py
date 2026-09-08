@@ -39,7 +39,8 @@ HEBREW_TICKERS = {
     "מיקרוסופט": "MSFT",
     "מייקרוסופט": "MSFT",
     "מטא": "META",
-    "מיקרון": "MU"
+    "מיקרון": "MU",
+    "נביוס": "NBIS"
 }
 
 def start_health_server():
@@ -104,24 +105,20 @@ def extract_ticker(text: str):
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
 
-    # סינון ברכות וביטויי שיחה נפוצים כדי לא לחפש בתוכם טיקר בטעות
-    chat_phrases = [
-        "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
-        "ערב טוב", "לילה טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי"
-    ]
-    has_cashtag = bool(re.findall(r'\$([A-Za-z]{1,5})\b', clean_text))
-    if not has_cashtag and any(p in clean_text for p in chat_phrases):
-        return None
-
-    # בדיקת שמות בעברית
-    for heb_name, ticker in HEBREW_TICKERS.items():
-        if heb_name in clean_text:
-            return ticker
-
-    # בדיקת $TICKER
     cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
     if cashtags:
         return cashtags[0].upper()
+
+    for heb_name, ticker in HEBREW_TICKERS.items():
+        if re.search(rf"\b{heb_name}\b", clean_text):
+            return ticker
+
+    chat_phrases = [
+        "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
+        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב"
+    ]
+    if any(p in clean_text for p in chat_phrases):
+        return None
 
     words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
     ignored = {
@@ -129,10 +126,8 @@ def extract_ticker(text: str):
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
         "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
     }
-
     filtered = [w for w in words if w not in ignored]
-    # זיהוי טיקר באנגלית רק אם השאילתה קצרה וממוקדת במניה
-    if len(filtered) == 1 and len(clean_text.split()) <= 4:
+    if len(filtered) == 1 and len(clean_text.split()) <= 3:
         return filtered[0]
 
     return None
@@ -153,18 +148,21 @@ def analyze_and_format(ticker_symbol: str) -> str:
 
         engine = PlaybookEngine(df)
         result = engine.evaluate()
+        metrics = result.get("metrics", {})
 
-        curr = engine.df.iloc[-1]
-        last_price = float(curr["Close"])
-        rsi = float(curr["RSI_14"])
-        sma150 = float(curr["SMA_150"])
+        last_price = metrics.get("close", 0.0)
+        rsi = metrics.get("rsi", 50.0)
+        sma150 = metrics.get("sma150", 0.0)
+        rvol = metrics.get("rvol", 1.0)
+        atr = metrics.get("atr", 0.0)
 
-        mentor_text = get_mentor_analysis(ticker_symbol, result, last_price, rsi, sma150)
+        mentor_text = get_mentor_analysis(ticker_symbol, result, metrics)
 
         formatted_reply = (
             f"📊 צ'יפ בודק את {ticker_symbol}:\n"
-            f"מחיר נוכחי: {last_price:.2f}$ | ממוצע 150: {sma150:.2f}$ | RSI: {rsi:.1f}\n"
-            f"החלטת מנוע: {result.get('status')}\n\n"
+            f"מחיר: {last_price:.2f}$ | ממוצע 150: {sma150:.2f}$ | RSI: {rsi:.1f}\n"
+            f"RVOL: {rvol:.2f} | ATR: {atr:.2f}$\n"
+            f"החלטת מנוע: {result.get('status')} ({result.get('setup')})\n\n"
             f"💡 דבר המנטור:\n"
             f"{mentor_text}"
         )
@@ -175,7 +173,6 @@ def analyze_and_format(ticker_symbol: str) -> str:
         return f"שגיאה בבדיקת {ticker_symbol}: {e}"
 
 def safe_reply(message, text: str):
-    """שולח הודעה בצורה בטוחה, ובמקרה של שגיאת עיצוב חוזר לשליחה פשוטה."""
     try:
         bot.reply_to(message, text, parse_mode="Markdown")
     except Exception:
