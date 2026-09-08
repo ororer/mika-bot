@@ -198,7 +198,6 @@ def safe_reply(message, text: str):
     chat_id = message.chat.id
     is_channel = (message.chat.type == 'channel')
 
-    # בערוצים שולחים כהודעה חדשה לערוץ
     if is_channel:
         try:
             bot.send_message(chat_id, text, parse_mode="Markdown")
@@ -206,7 +205,6 @@ def safe_reply(message, text: str):
             bot.send_message(chat_id, text)
         return
 
-    # בצ'אטים פרטיים וקבוצות מגיבים להודעה
     try:
         bot.reply_to(message, text, parse_mode="Markdown")
     except Exception:
@@ -235,7 +233,6 @@ def process_incoming_message(message):
     chat_id = message.chat.id
     normalized = normalize_text(user_text)
     is_private = (chat_type == 'private')
-    is_channel = (chat_type == 'channel')
 
     is_reply_to_bot = False
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -255,7 +252,6 @@ def process_incoming_message(message):
 
     ticker = extract_ticker(user_text)
 
-    # סינון: אם זה בקבוצה או ערוץ, מגיבים רק אם תויג צ'יפ, או שיש פקודה, או שיש טיקר
     if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_pelosi_query and not ticker:
         return
 
@@ -303,6 +299,25 @@ def handle_channel_posts(message):
 if __name__ == "__main__":
     t = threading.Thread(target=start_health_server, daemon=True)
     t.start()
-    time.sleep(1)
+    
+    # ניקוי חיבורים קודמים ומניעת שגיאות 409
+    try:
+        bot.remove_webhook()
+    except Exception:
+        pass
+    time.sleep(3)
+
     print("...צ'יפ מחובר ומאזין בטלגרם (פרטי + קבוצות + ערוצים)", flush=True)
-    bot.infinity_polling(timeout=20, long_polling_timeout=15)
+    
+    while True:
+        try:
+            bot.infinity_polling(timeout=20, long_polling_timeout=15)
+        except telebot.apihelper.ApiTelegramException as e:
+            if "409" in str(e):
+                print("[409 Conflict Detected] ממתין 5 שניות לסגירת מופע מתחרה...", flush=True)
+                time.sleep(5)
+            else:
+                time.sleep(2)
+        except Exception as ex:
+            print(f"[Polling Error] {ex}", flush=True)
+            time.sleep(3)
