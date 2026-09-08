@@ -9,9 +9,8 @@ if GEMINI_API_KEY:
 
 # רשימת המודלים הפעילים בחשבון לפי סדר עדיפות
 CANDIDATE_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.5-flash-lite"
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
 ]
 
 SYSTEM_INSTRUCTION = """
