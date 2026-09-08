@@ -8,6 +8,7 @@ import telebot
 import yfinance as yf
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
+from db import get_active_trades, get_trade_history
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
@@ -62,6 +63,42 @@ def normalize_text(text: str) -> str:
         return ""
     return text.replace("’", "'").replace("`", "'").replace("״", '"')
 
+def format_active_trades() -> str:
+    trades = get_active_trades()
+    if not trades:
+        return "💼 כרגע אין עסקאות פעילות בתיק. השולחן נקי, אנחנו על הגדר ומחכים לסטאפ מנצח לפי הפלייבוק!"
+
+    response_lines = ["💼 *סטטוס עסקאות פעילות (Chip Swing Portfolio):*\n"]
+    for t in trades:
+        ticker = t.get("ticker", "")
+        entry_price = float(t.get("entry_price", 0))
+        stop_loss = float(t.get("stop_loss", 0))
+        target_price = t.get("target_price")
+        target_str = f"{float(target_price):.2f}$" if target_price else "פתוח"
+
+        # בדיקת מחיר חי דרך yfinance
+        curr_price = entry_price
+        pnl_pct = 0.0
+        try:
+            live_data = yf.Ticker(ticker).history(period="1d")
+            if not live_data.empty:
+                curr_price = float(live_data["Close"].iloc[-1])
+                pnl_pct = ((curr_price - entry_price) / entry_price) * 100
+        except Exception:
+            pass
+
+        sign = "+" if pnl_pct >= 0 else ""
+        icon = "🟢" if pnl_pct >= 0 else "🔴"
+
+        response_lines.append(
+            f"{icon} *{ticker}* | מחיר נוכחי: {curr_price:.2f}$ ({sign}{pnl_pct:.2f}%)\n"
+            f"   • כניסה: {entry_price:.2f}$ | סטופ: {stop_loss:.2f}$ | יעד: {target_str}\n"
+            f"   • סטאפ: {t.get('setup_type', 'Breakout')} | נכנס בתאריך: {t.get('entry_date')}\n"
+        )
+
+    response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
+    return "\n".join(response_lines)
+
 def extract_ticker(text: str):
     clean_text = normalize_text(text)
     if BOT_USERNAME:
@@ -80,7 +117,7 @@ def extract_ticker(text: str):
     ignored = {
         "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
         "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP"
+        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
     }
 
     for word in words:
@@ -159,10 +196,13 @@ def process_incoming_message(message):
     elif any(k in normalized.lower() for k in ["צ'יפ", "ציפ", "chip"]):
         is_mentioned = True
 
-    ticker = extract_ticker(user_text)
+    # בדיקה ישירה לפקודת עסקאות פתוחות
+    is_trades_query = any(cmd in normalized.lower() for cmd in ["/trades", "עסקאות פתוחות", "פוזיציות פתוחות", "תיק עסקאות"])
 
-    if not is_private and not ticker and not is_reply_to_bot and not is_mentioned:
-        return
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query:
+        ticker = extract_ticker(user_text)
+        if not ticker:
+            return
 
     try:
         bot.send_chat_action(chat_id, 'typing')
@@ -170,18 +210,26 @@ def process_incoming_message(message):
         pass
 
     try:
-        if ticker:
-            reply = analyze_and_format(ticker)
+        if is_trades_query:
+            reply = format_active_trades()
         else:
-            clean_text = normalized
-            if BOT_USERNAME:
-                clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
-            clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
-            reply = get_mentor_chat_reply(clean_text or normalized)
+            ticker = extract_ticker(user_text)
+            if ticker:
+                reply = analyze_and_format(ticker)
+            else:
+                clean_text = normalized
+                if BOT_USERNAME:
+                    clean_text = re.sub(rf"@{BOT_USERNAME}", "", clean_text, flags=re.IGNORECASE)
+                clean_text = re.sub(r"\b(צ'יפ|ציפ|chip)\b", "", clean_text, flags=re.IGNORECASE).strip()
+                reply = get_mentor_chat_reply(clean_text or normalized)
 
-        bot.reply_to(message, reply)
+        bot.reply_to(message, reply, parse_mode="Markdown")
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
+
+@bot.message_handler(commands=['trades'])
+def handle_trades_command(message):
+    process_incoming_message(message)
 
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
