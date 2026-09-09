@@ -1,5 +1,6 @@
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
@@ -17,22 +18,23 @@ SYSTEM_PROMPT = """
 4. עברית רהוטה וברורה.
 """
 
+# אתחול הלקוח החדש של גוגל
+client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-def get_model():
-    return genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=SYSTEM_PROMPT
-    )
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
 def query_gemini(prompt_text: str) -> str:
-    if not GEMINI_API_KEY:
+    if not client:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
     try:
-        model = get_model()
-        response = model.generate_content(prompt_text)
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt_text,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+            )
+        )
         if response and response.text:
             return response.text.strip()
         return "לא התקבלה תובנה חכמה מהמודל."
