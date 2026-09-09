@@ -44,13 +44,15 @@ def analyze_ticker(ticker_symbol: str):
     engine = PlaybookEngine(df)
     result = engine.evaluate()
 
-    curr = engine.df.iloc[-1]
-    last_price = float(curr["Close"])
-    rsi = float(curr["RSI_14"])
-    sma150 = float(curr["SMA_150"])
+    # שליפת המדדים שמנוע החישוב כבר ארז עבורנו
+    metrics = result.get("metrics", {})
+    last_price = metrics.get("close", 0.0)
+    rsi = metrics.get("rsi", 0.0)
+    sma150 = metrics.get("sma150", 0.0)
 
     print("מבקש ניתוח מ-Gemini...")
-    mentor_text = get_mentor_analysis(ticker_symbol, result, last_price, rsi, sma150)
+    # העברת המדדים כ-Dictionary בהתאם לדרישות החדשות של mentor.py
+    mentor_text = get_mentor_analysis(ticker_symbol, result, metrics)
 
     # הרכבת ההודעה
     msg = (
