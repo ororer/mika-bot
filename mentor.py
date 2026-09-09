@@ -26,10 +26,12 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
     if not client:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
+    backoff_times = [5, 10, 20]  # זמני המתנה מתגברים בשניות
+    
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
-                model='gemini-3.6-flash',  # המודל המדויק שגוגל דורשים בחשבון שלך
+                model='gemini-flash',  # ניתוב חכם למודל הפנוי ביותר
                 contents=prompt_text,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -40,11 +42,19 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
             return "לא התקבלה תובנה חכמה מהמודל."
             
         except Exception as e:
-            print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {e}", flush=True)
+            error_str = str(e)
+            print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {error_str}", flush=True)
+            
+            # אם קיבלנו שגיאת 404 על הכינוי הכללי, אין טעם להמתין - גוגל פשוט דורשים את השם המלא בחשבון הזה
+            if "404" in error_str:
+                return "אני לא מצליח להתחבר למודל השפה (שגיאת 404). צריך לעדכן את שם המודל המדויק בקוד."
+                
             if attempt < retries - 1:
-                time.sleep(3)  # ממתין 3 שניות במקרה של עומס ומנסה שוב
+                wait_time = backoff_times[attempt]
+                print(f"[Mentor API] ממתין {wait_time} שניות לפני ניסיון נוסף...", flush=True)
+                time.sleep(wait_time)
             else:
-                return "השרתים של גוגל קצת עמוסים כרגע. תעיף מבט בנתונים הטכניים מעלה ונהל סיכונים לפי הספר."
+                return "השרתים של גוגל עמוסים עד אפס מקום כרגע (שגיאת 503). נסה שוב בעוד כמה דקות."
 
 def get_mentor_analysis(ticker: str, result: dict, metrics: dict, user_prompt: str = "") -> str:
     setup = result.get('setup', 'ללא סטאפ')
