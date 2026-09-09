@@ -7,20 +7,19 @@ class PlaybookEngine:
         self._calculate_indicators()
 
     def _calculate_indicators(self):
-        # טיפול ב-MultiIndex של yfinance אם קיים
         if isinstance(self.df.columns, pd.MultiIndex):
             self.df.columns = [col[0] for col in self.df.columns]
 
-        # 1. ממוצעים נעים פשוטים (Trend Templates)
+        # חישוב ממוצע 20 שהוספנו
+        self.df['SMA_20'] = self.df['Close'].rolling(window=20, min_periods=20).mean()
+        
         self.df['SMA_50'] = self.df['Close'].rolling(window=50, min_periods=50).mean()
         self.df['SMA_150'] = self.df['Close'].rolling(window=150, min_periods=150).mean()
         self.df['SMA_200'] = self.df['Close'].rolling(window=200, min_periods=200).mean()
 
-        # 2. ממוצעים מעריכיים קצרי טווח (Momentum & Trend Riding)
         self.df['EMA_10'] = self.df['Close'].ewm(span=10, adjust=False).mean()
         self.df['EMA_21'] = self.df['Close'].ewm(span=21, adjust=False).mean()
 
-        # 3. חישוב RSI (14)
         delta = self.df['Close'].diff()
         gain = delta.where(delta > 0, 0.0)
         loss = -delta.where(delta < 0, 0.0)
@@ -30,21 +29,18 @@ class PlaybookEngine:
         rsi = 100.0 - (100.0 / (1.0 + rs))
         self.df['RSI_14'] = rsi.fillna(100.0 * (avg_gain > 0))
 
-        # 4. חישוב ATR (14) - Average True Range
         high_low = self.df['High'] - self.df['Low']
         high_close = (self.df['High'] - self.df['Close'].shift(1)).abs()
         low_close = (self.df['Low'] - self.df['Close'].shift(1)).abs()
         true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         self.df['ATR_14'] = true_range.rolling(window=14, min_periods=14).mean()
 
-        # 5. חישוב RVOL (Relative Volume ביחס לממוצע 20 יום)
         if 'Volume' in self.df.columns:
             vol_sma20 = self.df['Volume'].rolling(window=20, min_periods=20).mean()
             self.df['RVOL'] = (self.df['Volume'] / vol_sma20.replace(0, np.nan)).fillna(1.0)
         else:
             self.df['RVOL'] = 1.0
 
-        # 6. חישוב MACD (12, 26, 9)
         ema12 = self.df['Close'].ewm(span=12, adjust=False).mean()
         ema26 = self.df['Close'].ewm(span=26, adjust=False).mean()
         self.df['MACD'] = ema12 - ema26
@@ -52,24 +48,20 @@ class PlaybookEngine:
         self.df['MACD_Hist'] = self.df['MACD'] - self.df['MACD_Signal']
 
     def _detect_vcp(self) -> bool:
-        """בדיקת דחיסת תנודתיות (VCP): האם טווחי הנרות קטנים בהדרגה על פני 10 ימים אחרונים"""
         if len(self.df) < 15:
             return False
         ranges = (self.df['High'] - self.df['Low']).tail(10).values
         first_half_avg = np.mean(ranges[:5])
         second_half_avg = np.mean(ranges[5:])
-        # אם התנודתיות בחצי השני קטנה בלפחות 30% מהחצי הראשון
         return second_half_avg < (first_half_avg * 0.70)
 
     def _check_market_structure(self) -> str:
-        """אימות מבנה מחיר: שיאים ושפלים עולים ב-20 הנרות האחרונים"""
         if len(self.df) < 25:
             return "נתונים חסרים"
         recent = self.df.tail(20)
         highs = recent['High'].values
         lows = recent['Low'].values
         
-        # השוואת שפל אחרון לחציון שפלים קודמים
         min_first = np.min(lows[:10])
         min_second = np.min(lows[10:])
         max_first = np.max(highs[:10])
@@ -82,17 +74,14 @@ class PlaybookEngine:
         return "מבנה מדשדש / ללא כיוון מובהק"
 
     def _detect_divergence(self) -> str:
-        """בדיקת סטיות פשוטה ב-RSI מול המחיר ב-14 הנרות האחרונים"""
         if len(self.df) < 20:
             return "ללא"
         recent = self.df.tail(14)
         price_start, price_end = recent['Close'].iloc[0], recent['Close'].iloc[-1]
         rsi_start, rsi_end = recent['RSI_14'].iloc[0], recent['RSI_14'].iloc[-1]
 
-        # סטייה שורית: מחיר יורד אך RSI עולה
         if price_end < price_start and rsi_end > rsi_start and rsi_end < 45:
             return "סטייה שורית ב-RSI (Bullish Divergence)"
-        # סטייה דובית: מחיר עולה אך RSI יורד
         if price_end > price_start and rsi_end < rsi_start and rsi_end > 65:
             return "סטייה דובית ב-RSI (Bearish Divergence)"
         return "ללא"
@@ -111,6 +100,10 @@ class PlaybookEngine:
         prev = self.df.iloc[-2]
 
         close = float(curr['Close'])
+        
+        # חילוץ ממוצע 20
+        sma20 = float(curr['SMA_20']) if not pd.isna(curr['SMA_20']) else close
+        
         sma50 = float(curr['SMA_50']) if not pd.isna(curr['SMA_50']) else close
         sma150 = float(curr['SMA_150'])
         sma200 = float(curr['SMA_200']) if not pd.isna(curr['SMA_200']) else sma150
@@ -124,9 +117,10 @@ class PlaybookEngine:
         structure = self._check_market_structure()
         divergence = self._detect_divergence()
 
-        # אריזת כל המדדים להעברה מרוכזת למנטור
+        # הוספת sma20 למילון שמועבר ל-Gemini
         metrics = {
             "close": close,
+            "sma20": sma20,
             "sma50": sma50,
             "sma150": sma150,
             "sma200": sma200,
@@ -140,7 +134,6 @@ class PlaybookEngine:
             "divergence": divergence
         }
 
-        # 1. סינון שוק: סכין נופלת מתחת לממוצע 150
         if close < sma150:
             return {
                 "status": "AVOID",
@@ -150,7 +143,6 @@ class PlaybookEngine:
                 "metrics": metrics
             }
 
-        # 2. מתיחות יתר
         if rsi > 70:
             return {
                 "status": "WAIT",
@@ -160,7 +152,6 @@ class PlaybookEngine:
                 "metrics": metrics
             }
 
-        # 3. בדיקת סטאפ פטיש עם אישור (קיים) + סינון RVOL
         prev_open = float(prev['Open'])
         prev_close = float(prev['Close'])
         prev_low = float(prev['Low'])
@@ -183,7 +174,6 @@ class PlaybookEngine:
                 "metrics": metrics
             }
 
-        # 4. בדיקת סטאפ פריצה מדחיסה (VCP Breakout)
         if is_vcp and close > ema10 and rvol >= 1.3:
             stop_loss = ema21 * 0.99
             return {
@@ -194,7 +184,6 @@ class PlaybookEngine:
                 "metrics": metrics
             }
 
-        # ברירת מחדל: המתנה לתבנית ברורה
         return {
             "status": "WAIT",
             "message": "המניה במגמה חיובית מעל ממוצע 150, אך אין כרגע טריגר היפוך או דחיסה מושלמת להנחת סטופ-לוס. יושבים על הגדר בסבלנות.",
