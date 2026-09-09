@@ -2,6 +2,6 @@ pyTelegramBotAPI
 yfinance>=0.2.40
 pandas
 numpy
-google-generativeai>=0.7.2
+google-genai
 pytz
 supabase
