@@ -51,8 +51,8 @@ def analyze_ticker(ticker_symbol: str):
     sma150 = metrics.get("sma150", 0.0)
 
     print("מבקש ניתוח מ-Gemini...")
-    # העברת המדדים כ-Dictionary בהתאם לדרישות החדשות של mentor.py
-    mentor_text = get_mentor_analysis(ticker_symbol, result, metrics)
+    # הוספת פרמטר רביעי ריק כדי להתאים לחתימת הפונקציה ב-bot.py
+    mentor_text = get_mentor_analysis(ticker_symbol, result, metrics, "")
 
     # הרכבת ההודעה
     msg = (
