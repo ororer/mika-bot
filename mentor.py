@@ -31,7 +31,7 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
-                model='gemini-flash',  # ניתוב חכם למודל הפנוי ביותר
+                model='gemini-3.6-flash',  # השם המדויק שנדרש בחשבון שלך
                 contents=prompt_text,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -44,10 +44,6 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
         except Exception as e:
             error_str = str(e)
             print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {error_str}", flush=True)
-            
-            # אם קיבלנו שגיאת 404 על הכינוי הכללי, אין טעם להמתין - גוגל פשוט דורשים את השם המלא בחשבון הזה
-            if "404" in error_str:
-                return "אני לא מצליח להתחבר למודל השפה (שגיאת 404). צריך לעדכן את שם המודל המדויק בקוד."
                 
             if attempt < retries - 1:
                 wait_time = backoff_times[attempt]
