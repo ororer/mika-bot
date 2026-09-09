@@ -29,7 +29,6 @@ try:
 except Exception as e:
     print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
-# שימוש ב-deque למניעת Race Conditions ולהגבלת גודל טבעית
 PROCESSED_MESSAGES = deque(maxlen=500)
 USER_LAST_TICKER = {}
 
@@ -72,7 +71,6 @@ def start_health_server():
     server.serve_forever()
 
 def keep_alive():
-    """שעון מעורר פנימי שפונה לשרת של עצמו כל 10 דקות כדי למנוע הירדמות ב-Render"""
     app_url = os.environ.get("RENDER_EXTERNAL_URL")
     if not app_url:
         print("[Keep-Alive] אזהרה: משתנה הסביבה RENDER_EXTERNAL_URL אינו מוגדר. המנגנון מבוטל.")
@@ -85,7 +83,7 @@ def keep_alive():
                 print(f"[Keep-Alive] Ping to {app_url} sent successfully.")
             except Exception as e:
                 print(f"[Keep-Alive] Error pinging self: {e}")
-            time.sleep(600)  # ממתין 10 דקות (600 שניות) לפני הפינג הבא
+            time.sleep(600)
     
     threading.Thread(target=run, daemon=True).start()
     print("[Keep-Alive] שעון מעורר פנימי הופעל בהצלחה", flush=True)
@@ -117,7 +115,6 @@ def format_active_trades() -> str:
                 curr_price = float(live_data["Close"].iloc[-1])
                 pnl_pct = ((curr_price - entry_price) / entry_price) * 100
         except Exception as e:
-            # טיפול שגיאות תקין במקרה של כשל במשיכת נתונים מיאהו
             price_status = " (מחיר היסטורי)"
             print(f"[Data Fetch Error] Could not get live price for {ticker}: {e}")
 
@@ -184,6 +181,7 @@ def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
         metrics = result.get("metrics", {})
 
         last_price = metrics.get("close", 0.0)
+        sma20 = metrics.get("sma20", 0.0)
         rsi = metrics.get("rsi", 50.0)
         sma150 = metrics.get("sma150", 0.0)
         rvol = metrics.get("rvol", 1.0)
@@ -193,8 +191,8 @@ def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
 
         formatted_reply = (
             f"📊 צ'יפ בודק את {ticker_symbol}:\n"
-            f"מחיר: {last_price:.2f}$ | ממוצע 150: {sma150:.2f}$ | RSI: {rsi:.1f}\n"
-            f"RVOL: {rvol:.2f} | ATR: {atr:.2f}$\n"
+            f"מחיר: {last_price:.2f}$ | ממוצע 20: {sma20:.2f}$ | ממוצע 150: {sma150:.2f}$\n"
+            f"RSI: {rsi:.1f} | RVOL: {rvol:.2f} | ATR: {atr:.2f}$\n"
             f"החלטת מנוע: {result.get('status')} ({result.get('setup')})\n\n"
             f"💡 דבר המנטור:\n"
             f"{mentor_text}"
@@ -233,7 +231,6 @@ def process_incoming_message(message):
     if msg_key in PROCESSED_MESSAGES:
         return
     
-    # הוספה ל-deque (מטפל במחיקה אוטומטית של ישנים)
     PROCESSED_MESSAGES.append(msg_key)
 
     raw_text = message.text or message.caption or ""
@@ -271,9 +268,9 @@ def process_incoming_message(message):
 
     ticker = extract_ticker(user_text)
     
-    # מנגנון הזיכרון לשאלות המשך ללא טיקר
     if not ticker:
-        follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח"]
+        # כאן הוספנו מילות מפתח קריטיות לשאלות המשך
+        follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema"]
         if any(w in normalized for w in follow_up_words):
             if memory_key in USER_LAST_TICKER:
                 if time.time() - USER_LAST_TICKER[memory_key]["time"] < 300:
@@ -328,11 +325,9 @@ def handle_channel_posts(message):
     process_incoming_message(message)
 
 if __name__ == "__main__":
-    # הפעלת שרת הבריאות של Render
     t = threading.Thread(target=start_health_server, daemon=True)
     t.start()
     
-    # הפעלת מנגנון השעון המעורר הפנימי
     keep_alive()
     
     try:
