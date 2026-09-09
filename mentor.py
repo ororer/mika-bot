@@ -28,8 +28,9 @@ def query_gemini(prompt_text: str) -> str:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
     try:
+        # עדכון לשם המודל החדש והנתמך בספרייה
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt_text,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
