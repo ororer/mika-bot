@@ -22,18 +22,14 @@ client = None
 if GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
 
-# משתנה גלובלי שיחזיק את שם המודל - יתעדכן אוטומטית אם יהיה צורך
-ACTIVE_MODEL_NAME = 'gemini-2.0-flash'
-
 def query_gemini(prompt_text: str, retries: int = 3) -> str:
-    global ACTIVE_MODEL_NAME
     if not client:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
-                model=ACTIVE_MODEL_NAME,
+                model='gemini-3.6-flash',  # המודל המדויק שגוגל דורשים בחשבון שלך
                 contents=prompt_text,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -44,28 +40,11 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
             return "לא התקבלה תובנה חכמה מהמודל."
             
         except Exception as e:
-            error_msg = str(e)
-            print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {error_msg}", flush=True)
-            
-            # מנגנון תיקון עצמי - אם המודל לא נמצא, נמשוך את מה שזמין
-            if "404" in error_msg or "NOT_FOUND" in error_msg:
-                print(f"[Auto-Fix] המודל {ACTIVE_MODEL_NAME} לא נמצא. סורק מודלים זמינים מהשרת...", flush=True)
-                try:
-                    models = client.models.list()
-                    for m in models:
-                        name = getattr(m, 'name', '')
-                        if "flash" in name.lower():
-                            # ניקוי הקידומת 'models/' שגוגל לעיתים מחזירה
-                            ACTIVE_MODEL_NAME = name.replace("models/", "")
-                            print(f"[Auto-Fix] נמצא מודל תקין: {ACTIVE_MODEL_NAME}. מנסה שוב...", flush=True)
-                            break
-                except Exception as fetch_err:
-                    print(f"[Auto-Fix Error] שגיאה בסריקת מודלים: {fetch_err}", flush=True)
-            
+            print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {e}", flush=True)
             if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))  # המתנה אקספוננציאלית בין ניסיונות
+                time.sleep(3)  # ממתין 3 שניות במקרה של עומס ומנסה שוב
             else:
-                return "אני קצת עמוס כרגע. תעיף מבט בנתונים הטכניים מעלה ונהל סיכונים לפי הספר."
+                return "השרתים של גוגל קצת עמוסים כרגע. תעיף מבט בנתונים הטכניים מעלה ונהל סיכונים לפי הספר."
 
 def get_mentor_analysis(ticker: str, result: dict, metrics: dict, user_prompt: str = "") -> str:
     setup = result.get('setup', 'ללא סטאפ')
