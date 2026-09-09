@@ -1,4 +1,5 @@
 import os
+import time
 from google import genai
 from google.genai import types
 
@@ -21,24 +22,29 @@ client = None
 if GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
 
-def query_gemini(prompt_text: str) -> str:
+def query_gemini(prompt_text: str, retries: int = 3) -> str:
     if not client:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.6-flash',
-            contents=prompt_text,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model='gemini-1.5-flash',  # שונה לגרסה היציבה כדי למנוע קריסות ועומסים
+                contents=prompt_text,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                )
             )
-        )
-        if response and response.text:
-            return response.text.strip()
-        return "לא התקבלה תובנה חכמה מהמודל."
-    except Exception as e:
-        print(f"[Mentor API Error] {e}", flush=True)
-        return "אני קצת עמוס כרגע. תעיף מבט בנתונים הטכניים מעלה ונהל סיכונים לפי הספר."
+            if response and response.text:
+                return response.text.strip()
+            return "לא התקבלה תובנה חכמה מהמודל."
+            
+        except Exception as e:
+            print(f"[Mentor API Error - Attempt {attempt + 1}/{retries}] {e}", flush=True)
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))  # ממתין קצת יותר זמן בין ניסיון לניסיון
+            else:
+                return "אני קצת עמוס כרגע. תעיף מבט בנתונים הטכניים מעלה ונהל סיכונים לפי הספר."
 
 def get_mentor_analysis(ticker: str, result: dict, metrics: dict, user_prompt: str = "") -> str:
     setup = result.get('setup', 'ללא סטאפ')
