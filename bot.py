@@ -7,6 +7,7 @@ import socketserver
 import urllib.request
 import telebot
 import yfinance as yf
+from collections import deque
 from engine import PlaybookEngine
 from mentor import get_mentor_analysis, get_mentor_chat_reply
 from db import get_active_trades, get_trade_history
@@ -28,7 +29,8 @@ try:
 except Exception as e:
     print(f"[Bot Init] שגיאה במשיכת נתוני בוט: {e}", flush=True)
 
-PROCESSED_MESSAGES = set()
+# שימוש ב-deque למניעת Race Conditions ולהגבלת גודל טבעית
+PROCESSED_MESSAGES = deque(maxlen=500)
 USER_LAST_TICKER = {}
 
 HEBREW_TICKERS = {
@@ -71,12 +73,18 @@ def start_health_server():
 
 def keep_alive():
     """שעון מעורר פנימי שפונה לשרת של עצמו כל 10 דקות כדי למנוע הירדמות ב-Render"""
+    app_url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not app_url:
+        print("[Keep-Alive] אזהרה: משתנה הסביבה RENDER_EXTERNAL_URL אינו מוגדר. המנגנון מבוטל.")
+        return
+
     def run():
         while True:
             try:
-                urllib.request.urlopen("https://mika-bot-folt.onrender.com")
-            except Exception:
-                pass
+                urllib.request.urlopen(app_url)
+                print(f"[Keep-Alive] Ping to {app_url} sent successfully.")
+            except Exception as e:
+                print(f"[Keep-Alive] Error pinging self: {e}")
             time.sleep(600)  # ממתין 10 דקות (600 שניות) לפני הפינג הבא
     
     threading.Thread(target=run, daemon=True).start()
@@ -102,19 +110,22 @@ def format_active_trades() -> str:
 
         curr_price = entry_price
         pnl_pct = 0.0
+        price_status = ""
         try:
             live_data = yf.Ticker(ticker).history(period="1d")
             if not live_data.empty:
                 curr_price = float(live_data["Close"].iloc[-1])
                 pnl_pct = ((curr_price - entry_price) / entry_price) * 100
-        except Exception:
-            pass
+        except Exception as e:
+            # טיפול שגיאות תקין במקרה של כשל במשיכת נתונים מיאהו
+            price_status = " (מחיר היסטורי)"
+            print(f"[Data Fetch Error] Could not get live price for {ticker}: {e}")
 
         sign = "+" if pnl_pct >= 0 else ""
         icon = "🟢" if pnl_pct >= 0 else "🔴"
 
         response_lines.append(
-            f"{icon} {ticker} | מחיר נוכחי: {curr_price:.2f}$ ({sign}{pnl_pct:.2f}%)\n"
+            f"{icon} {ticker} | מחיר נוכחי: {curr_price:.2f}${price_status} ({sign}{pnl_pct:.2f}%)\n"
             f"   • כניסה: {entry_price:.2f}$ | סטופ: {stop_loss:.2f}$ | יעד: {target_str}\n"
             f"   • סטאפ: {t.get('setup_type', 'Breakout')} | נכנס בתאריך: {t.get('entry_date')}\n"
         )
@@ -221,9 +232,9 @@ def process_incoming_message(message):
     msg_key = f"{message.chat.id}_{message.message_id}"
     if msg_key in PROCESSED_MESSAGES:
         return
-    PROCESSED_MESSAGES.add(msg_key)
-    if len(PROCESSED_MESSAGES) > 500:
-        PROCESSED_MESSAGES.clear()
+    
+    # הוספה ל-deque (מטפל במחיקה אוטומטית של ישנים)
+    PROCESSED_MESSAGES.append(msg_key)
 
     raw_text = message.text or message.caption or ""
     user_text = raw_text.strip()
