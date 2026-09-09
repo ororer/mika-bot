@@ -4,6 +4,7 @@ import time
 import threading
 import http.server
 import socketserver
+import urllib.request
 import telebot
 import yfinance as yf
 from engine import PlaybookEngine
@@ -68,6 +69,19 @@ def start_health_server():
     print(f"[Health Server] מאזין על פורט {port}", flush=True)
     server.serve_forever()
 
+def keep_alive():
+    """שעון מעורר פנימי שפונה לשרת של עצמו כל 10 דקות כדי למנוע הירדמות ב-Render"""
+    def run():
+        while True:
+            try:
+                urllib.request.urlopen("https://mika-bot-folt.onrender.com")
+            except Exception:
+                pass
+            time.sleep(600)  # ממתין 10 דקות (600 שניות) לפני הפינג הבא
+    
+    threading.Thread(target=run, daemon=True).start()
+    print("[Keep-Alive] שעון מעורר פנימי הופעל בהצלחה", flush=True)
+
 def normalize_text(text: str) -> str:
     if not text:
         return ""
@@ -105,7 +119,7 @@ def format_active_trades() -> str:
             f"   • סטאפ: {t.get('setup_type', 'Breakout')} | נכנס בתאריך: {t.get('entry_date')}\n"
         )
 
-    response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
+        response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
     return "\n".join(response_lines)
 
 def extract_ticker(text: str):
@@ -303,8 +317,12 @@ def handle_channel_posts(message):
     process_incoming_message(message)
 
 if __name__ == "__main__":
+    # הפעלת שרת הבריאות של Render
     t = threading.Thread(target=start_health_server, daemon=True)
     t.start()
+    
+    # הפעלת מנגנון השעון המעורר הפנימי
+    keep_alive()
     
     try:
         bot.remove_webhook()
