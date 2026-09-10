@@ -17,7 +17,6 @@ SYSTEM_PROMPT = """
 - ענה תמיד בעברית רהוטה וברורה.
 """
 
-# אתחול הלקוח החדש של גוגל
 client = None
 if GEMINI_API_KEY:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -26,12 +25,12 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
     if not client:
         return "המערכת מנותקת כרגע (חסר מפתח AI). עבוד לפי הנתונים היבשים."
         
-    backoff_times = [5, 10, 20]  # זמני המתנה מתגברים בשניות
+    backoff_times = [5, 10, 20]
     
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
-                model='gemini-3.6-flash',  # השם המדויק שנדרש בחשבון שלך
+                model='gemini-3.6-flash',
                 contents=prompt_text,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -78,12 +77,23 @@ def get_mentor_analysis(ticker: str, result: dict, metrics: dict, user_prompt: s
 """
     return query_gemini(prompt)
 
-def get_mentor_chat_reply(user_text: str) -> str:
-    prompt = f"""
-המשתמש פנה אליך בהודעה הבאה:
+def get_mentor_chat_reply(user_text: str, history: list = None) -> str:
+    if history is None:
+        history = []
+        
+    # בניית תמליל השיחה האחרונה כדי לתת הקשר ל-AI
+    transcript = ""
+    if history:
+        transcript += "היסטוריית השיחה עד כה (לצורך הקשר בלבד):\n"
+        for msg in history:
+            role = "משתמש" if msg["role"] == "user" else "צ'יפ"
+            transcript += f"{role}: {msg['text']}\n"
+        transcript += "---\n\n"
+        
+    prompt = f"""{transcript}המשתמש פנה אליך בהודעה החדשה הבאה:
 "{user_text}"
 
-ענה לו כמודל AI חכם. אם זו שאלה מורכבת, בקשה לקוד או ידע כללי, ענה באריכות ובפירוט הנדרש כמו עוזר וירטואלי מעולה. 
+ענה לו כמודל AI חכם. התחשב בהקשר השיחה הקודמת במידת הצורך כדי לשמור על עקביות. אם זו שאלה מורכבת, בקשה לקוד או ידע כללי, ענה באריכות ובפירוט הנדרש כמו עוזר וירטואלי מעולה. 
 רק אם הוא מבקש במפורש ניתוח טכני של מניה ספציפית אבל שכח לציין את שם המניה (טיקר) באנגלית, בקש ממנו להקליד את הטיקר.
 """
     return query_gemini(prompt)
