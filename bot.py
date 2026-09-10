@@ -33,7 +33,10 @@ except Exception as e:
 PROCESSED_MESSAGES = deque(maxlen=500)
 USER_LAST_TICKER = {}
 USER_CHAT_HISTORY = {}
-USER_LAST_INTERACTION = {}  # שמירת זמן האינטראקציה האחרון עבור מעקב בקבוצות
+USER_LAST_INTERACTION = {}
+
+memory_lock = threading.Lock()
+MAX_MEMORY_USERS = 1000
 
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
@@ -54,14 +57,36 @@ HEBREW_TICKERS = {
     "נטפליקס": "NFLX",
     "סנופי": "SPY",
     "נסדק": "QQQ",
-    "נאסדק": "QQQ"
+    "נאסדק": "QQQ",
+    "אקסון": "XOM",
+    "אקסון מוביל": "XOM"
 }
 
+IGNORED_WORDS = {
+    "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO",
+    "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
+    "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES", "AI",
+    "STOP", "LOSS", "TARGET", "PRICE", "VIEW", "API", "CODE", "APP", "CHAT",
+    "RUN", "USER", "TRUE", "FALSE", "NONE", "INFO", "DATA", "TEST", "RSI",
+    "MACD", "EMA", "SMA", "VCP", "ATR", "RVOL", "POST", "JSON", "GET", "WIFI", "USB",
+    "CEO", "FED", "VIP", "TEAM", "HOME", "PLAY", "ZOOM", "SNOW"
+}
+
+def clean_memory_leak():
+    """מונע זליגת זיכרון על ידי הגבלת כמות המשתמשים הנשמרים ברקע"""
+    with memory_lock:
+        if len(USER_LAST_INTERACTION) > MAX_MEMORY_USERS:
+            # מחיקת 100 המשתמשים הישנים ביותר כדי לפנות מקום
+            sorted_users = sorted(USER_LAST_INTERACTION.items(), key=lambda x: x[1])
+            for user, _ in sorted_users[:100]:
+                USER_LAST_INTERACTION.pop(user, None)
+                USER_CHAT_HISTORY.pop(user, None)
+                USER_LAST_TICKER.pop(user, None)
+
 def get_clean_session():
-    """מייצר חיבור נקי שמונע שמירת מטמון (Cache) כדי להבטיח נתונים טריים"""
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
         'Expires': '0'
@@ -79,28 +104,29 @@ def start_health_server():
         def log_message(self, format, *args):
             pass
 
-    server = socketserver.TCPServer(("0.0.0.0", port), QuietHandler)
-    server.allow_reuse_address = True
-    print(f"[Health Server] מאזין על פורט {port}", flush=True)
-    server.serve_forever()
+    try:
+        socketserver.TCPServer.allow_reuse_address = True
+        server = socketserver.TCPServer(("0.0.0.0", port), QuietHandler)
+        print(f"[Health Server] מאזין על פורט {port}", flush=True)
+        server.serve_forever()
+    except Exception as e:
+        print(f"[Health Server Error] {e}", flush=True)
 
 def keep_alive():
     app_url = os.environ.get("RENDER_EXTERNAL_URL")
     if not app_url:
-        print("[Keep-Alive] אזהרה: משתנה הסביבה RENDER_EXTERNAL_URL אינו מוגדר. המנגנון מבוטל.")
+        print("[Keep-Alive] אזהרה: משתנה הסביבה RENDER_EXTERNAL_URL אינו מוגדר.")
         return
 
     def run():
         while True:
             try:
-                urllib.request.urlopen(app_url)
-                print(f"[Keep-Alive] Ping to {app_url} sent successfully.")
+                urllib.request.urlopen(app_url, timeout=10)
             except Exception as e:
-                print(f"[Keep-Alive] Error pinging self: {e}")
+                print(f"[Keep-Alive] Ping error: {e}", flush=True)
             time.sleep(600)
     
     threading.Thread(target=run, daemon=True).start()
-    print("[Keep-Alive] שעון מעורר פנימי הופעל בהצלחה", flush=True)
 
 def normalize_text(text: str) -> str:
     if not text:
@@ -120,7 +146,11 @@ def format_active_trades() -> str:
         entry_price = float(t.get("entry_price", 0))
         stop_loss = float(t.get("stop_loss", 0))
         target_price = t.get("target_price")
-        target_str = f"{float(target_price):.2f}$" if target_price else "פתוח"
+        
+        try:
+            target_str = f"{float(target_price):.2f}$" if target_price else "פתוח"
+        except (ValueError, TypeError):
+            target_str = str(target_price) if target_price else "פתוח"
 
         curr_price = entry_price
         pnl_pct = 0.0
@@ -129,10 +159,14 @@ def format_active_trades() -> str:
             live_data = yf.Ticker(ticker, session=session).history(period="1d")
             if not live_data.empty:
                 curr_price = float(live_data["Close"].iloc[-1])
-                pnl_pct = ((curr_price - entry_price) / entry_price) * 100
+                if entry_price > 0:
+                    pnl_pct = ((curr_price - entry_price) / entry_price) * 100
+            
+            # הגנה מפני חסימת 429 מול יאהו בסריקה המונית
+            time.sleep(0.3)
         except Exception as e:
             price_status = " (מחיר היסטורי)"
-            print(f"[Data Fetch Error] Could not get live price for {ticker}: {e}")
+            print(f"[Data Fetch Error] Live price failed for {ticker}: {e}", flush=True)
 
         sign = "+" if pnl_pct >= 0 else ""
         icon = "🟢" if pnl_pct >= 0 else "🔴"
@@ -143,44 +177,43 @@ def format_active_trades() -> str:
             f"   • סטאפ: {t.get('setup_type', 'Breakout')} | נכנס בתאריך: {t.get('entry_date')}\n"
         )
 
-        response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
+    response_lines.append("שמרו על המשמעת, סטופ לוס בברזל! 🛡️")
     return "\n".join(response_lines)
 
 def extract_ticker(text: str):
     clean_text = normalize_text(text)
     if BOT_USERNAME:
         clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
-    clean_text = re.sub(r"@\w+_bot\b", "", clean_text, flags=re.IGNORECASE)
-
+    
     smart_tokens = ["אקמן", "קאתי", "קאת'י", "קטי", "ווד", "הואנג", "ג'נסן", "דליו", "טראמפ", "פלוסי", "ארק", "arkk"]
     if any(k in clean_text.lower() for k in smart_tokens):
         return None
 
-    cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', clean_text)
+    cashtags = re.findall(r'\$([A-Za-z]{1,5})\b', text)
     if cashtags:
         return cashtags[0].upper()
 
-    chat_phrases = [
-        "מה קורה", "מה נשמע", "מה המצב", "מה הולך", "היי", "שלום", "בוקר טוב",
-        "ערב טוב", "איך אתה", "מי אתה", "אתה כאן", "מה צפוי", "תודה", "מה אתה חושב",
-        "מה דעתך", "איך לפעול", "מה לעשות"
-    ]
-    if any(p in clean_text for p in chat_phrases):
-        return None
-
     for heb_name, ticker in HEBREW_TICKERS.items():
-        if heb_name in clean_text:
+        if re.search(rf'(?<![א-ת]){heb_name}(?![א-ת])', clean_text):
             return ticker
 
-    words = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text.upper())
-    ignored = {
-        "HI", "HELLO", "OK", "BUY", "SELL", "WAIT", "BOT", "HEY", "YES", "NO", 
-        "CHIP", "WHAT", "AGENT", "MARKET", "PRO", "AND", "THE", "CAN", "YOU",
-        "FOR", "HOW", "WHY", "NOW", "SEE", "GET", "NEW", "TOP", "TRADES"
-    }
-    filtered = [w for w in words if w not in ignored]
-    if len(filtered) == 1 and len(clean_text.split()) <= 3:
-        return filtered[0]
+    stock_hints = ["מניה", "מניית", "טיקר", "ניתוח", "שער", "גרף", "סווינג", "לונג", "שורט", "מחיר", "סטופ", "דעתך", "חושב", "קורה", "מצב", "בדוק"]
+    has_hint = any(h in clean_text for h in stock_hints)
+
+    uppercase_candidates = re.findall(r'\b[A-Z]{2,5}\b', text)
+    valid_uppercase = [uc for uc in uppercase_candidates if uc not in IGNORED_WORDS]
+    
+    raw_candidates = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text)
+    valid_candidates = [c.upper() for c in raw_candidates if c.upper() not in IGNORED_WORDS]
+
+    # חילוץ קפדני למניעת זיהוי מילים באנגלית כמניות בטעות
+    if valid_uppercase:
+        if has_hint or len(valid_candidates) == 1:
+            return valid_uppercase[0]
+            
+    if valid_candidates:
+        if has_hint or len(clean_text.split()) <= 3:
+            return valid_candidates[0]
 
     return None
 
@@ -191,7 +224,7 @@ def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
         df = ticker.history(period="250d", interval="1d")
 
         if df.empty or len(df) < 155:
-            return f"לא מצאתי מספיק נתונים עדכניים על {ticker_symbol}. ייתכן שהטיקר שגוי או שיש בעיית תקשורת זמנית."
+            return f"לא מצאתי מספיק נתונים עדכניים על {ticker_symbol}. ייתכן שהטיקר אינו תקין או שקיימת מגבלת רשת זמנית."
 
         engine = PlaybookEngine(df)
         result = engine.evaluate()
@@ -217,7 +250,7 @@ def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
         return formatted_reply
     except Exception as e:
         print(f"[Analyze Error] {e}", flush=True)
-        return f"שגיאה בבדיקת {ticker_symbol}. נסה שוב."
+        return f"שגיאה בבדיקת {ticker_symbol}. נסה שוב בעוד מספר רגעים."
 
 def safe_reply(message, text: str):
     if not text:
@@ -245,10 +278,10 @@ def process_incoming_message(message):
         return
 
     msg_key = f"{message.chat.id}_{message.message_id}"
-    if msg_key in PROCESSED_MESSAGES:
-        return
-    
-    PROCESSED_MESSAGES.append(msg_key)
+    with memory_lock:
+        if msg_key in PROCESSED_MESSAGES:
+            return
+        PROCESSED_MESSAGES.append(msg_key)
 
     raw_text = message.text or message.caption or ""
     user_text = raw_text.strip()
@@ -261,6 +294,9 @@ def process_incoming_message(message):
     memory_key = f"{chat_id}_{user_id}"
     normalized = normalize_text(user_text)
     is_private = (chat_type == 'private')
+    is_channel = (chat_type == 'channel')
+
+    clean_memory_leak()
 
     is_reply_to_bot = False
     if message.reply_to_message and message.reply_to_message.from_user:
@@ -283,26 +319,24 @@ def process_incoming_message(message):
     ]
     is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_triggers)
 
-    ticker = extract_ticker(user_text)
-    
-    if not ticker:
-        follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema"]
-        if any(w in normalized for w in follow_up_words):
-            if memory_key in USER_LAST_TICKER:
-                if time.time() - USER_LAST_TICKER[memory_key]["time"] < 300:
-                    ticker = USER_LAST_TICKER[memory_key]["ticker"]
-                    print(f"[Memory] שאלת המשך זוהתה, משתמש בטיקר {ticker}", flush=True)
+    ticker = extract_ticker(raw_text)
 
-    if ticker:
-        USER_LAST_TICKER[memory_key] = {"ticker": ticker, "time": time.time()}
+    with memory_lock:
+        if not ticker:
+            follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema"]
+            if any(w in normalized for w in follow_up_words):
+                if memory_key in USER_LAST_TICKER:
+                    if time.time() - USER_LAST_TICKER[memory_key]["time"] < 300:
+                        ticker = USER_LAST_TICKER[memory_key]["ticker"]
 
-    # בדיקה האם יש שיחה שוטפת פעילה עם המשתמש (בתוך חלון של 3 דקות)
-    is_ongoing_conversation = False
-    if memory_key in USER_LAST_INTERACTION:
-        if time.time() - USER_LAST_INTERACTION[memory_key] < 180:
-            is_ongoing_conversation = True
+        if ticker:
+            USER_LAST_TICKER[memory_key] = {"ticker": ticker, "time": time.time()}
 
-    # סינון קבוצות: מתעלמים רק אם אין שום סיבה להגיב ואין שיחה פתוחה
+        is_ongoing_conversation = False
+        if not is_channel and memory_key in USER_LAST_INTERACTION:
+            if time.time() - USER_LAST_INTERACTION[memory_key] < 60:
+                is_ongoing_conversation = True
+
     if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker and not is_ongoing_conversation:
         return
 
@@ -323,28 +357,32 @@ def process_incoming_message(message):
         else:
             clean_text = normalized
             if BOT_USERNAME:
-                clean_text = clean_text.replace(f"@{BOT_USERNAME}", "")
-            for tag in ["צ'יפ", "ציפ", "chip", "CHIP"]:
-                clean_text = clean_text.replace(tag, "")
+                clean_text = re.sub(rf"@{BOT_USERNAME}\b", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"\b(chip|CHIP)\b", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"(?<![א-ת])(צ'יפ|ציפ)(?![א-ת])", "", clean_text)
             clean_text = clean_text.strip()
 
             prompt_text = clean_text if clean_text else normalized
             
+            with memory_lock:
+                if memory_key not in USER_CHAT_HISTORY:
+                    USER_CHAT_HISTORY[memory_key] = []
+                chat_history = list(USER_CHAT_HISTORY[memory_key])
+                
+            reply = get_mentor_chat_reply(prompt_text, chat_history)
+
+        with memory_lock:
             if memory_key not in USER_CHAT_HISTORY:
                 USER_CHAT_HISTORY[memory_key] = []
             
-            chat_history = USER_CHAT_HISTORY[memory_key]
+            USER_CHAT_HISTORY[memory_key].append({"role": "user", "text": user_text})
+            USER_CHAT_HISTORY[memory_key].append({"role": "model", "text": reply})
             
-            reply = get_mentor_chat_reply(prompt_text, chat_history)
+            if len(USER_CHAT_HISTORY[memory_key]) > 10:
+                USER_CHAT_HISTORY[memory_key] = USER_CHAT_HISTORY[memory_key][-10:]
             
-            chat_history.append({"role": "user", "text": prompt_text})
-            chat_history.append({"role": "model", "text": reply})
-            
-            if len(chat_history) > 10:
-                USER_CHAT_HISTORY[memory_key] = chat_history[-10:]
+            USER_LAST_INTERACTION[memory_key] = time.time()
 
-        # עדכון חותמת הזמן לאינטראקציה כדי לשמור על חלון השיחה פתוח
-        USER_LAST_INTERACTION[memory_key] = time.time()
         safe_reply(message, reply)
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
@@ -353,11 +391,11 @@ def process_incoming_message(message):
 def handle_commands(message):
     process_incoming_message(message)
 
-@bot.message_handler(func=lambda message: True, content_types=['text'])
-def handle_text_messages(message):
+@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'document'])
+def handle_all_messages(message):
     process_incoming_message(message)
 
-@bot.channel_post_handler(func=lambda message: True, content_types=['text'])
+@bot.channel_post_handler(func=lambda message: True, content_types=['text', 'photo', 'document'])
 def handle_channel_posts(message):
     process_incoming_message(message)
 
