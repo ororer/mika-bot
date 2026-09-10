@@ -6,6 +6,7 @@ import http.server
 import socketserver
 import urllib.request
 import telebot
+import requests
 import yfinance as yf
 from collections import deque
 from engine import PlaybookEngine
@@ -54,6 +55,17 @@ HEBREW_TICKERS = {
     "נאסדק": "QQQ"
 }
 
+def get_clean_session():
+    """מייצר חיבור נקי שמונע שמירת מטמון (Cache) כדי להבטיח נתונים טריים"""
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+    })
+    return session
+
 def start_health_server():
     port = int(os.environ.get("PORT", 10000))
     class QuietHandler(http.server.BaseHTTPRequestHandler):
@@ -99,6 +111,8 @@ def format_active_trades() -> str:
         return "💼 כרגע אין עסקאות פעילות בתיק. השולחן נקי, אנחנו על הגדר ומחכים לסטאפ מנצח לפי הפלייבוק!"
 
     response_lines = ["💼 סטטוס עסקאות פעילות (Chip Swing Portfolio):\n"]
+    session = get_clean_session()
+    
     for t in trades:
         ticker = t.get("ticker", "")
         entry_price = float(t.get("entry_price", 0))
@@ -110,7 +124,7 @@ def format_active_trades() -> str:
         pnl_pct = 0.0
         price_status = ""
         try:
-            live_data = yf.Ticker(ticker).history(period="1d")
+            live_data = yf.Ticker(ticker, session=session).history(period="1d")
             if not live_data.empty:
                 curr_price = float(live_data["Close"].iloc[-1])
                 pnl_pct = ((curr_price - entry_price) / entry_price) * 100
@@ -170,11 +184,12 @@ def extract_ticker(text: str):
 
 def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        session = get_clean_session()
+        ticker = yf.Ticker(ticker_symbol, session=session)
         df = ticker.history(period="250d", interval="1d")
 
         if df.empty or len(df) < 155:
-            return f"לא מצאתי מספיק נתונים על {ticker_symbol}. תוודא שזה טיקר תקין."
+            return f"לא מצאתי מספיק נתונים עדכניים על {ticker_symbol}. ייתכן שהטיקר שגוי או שיש בעיית תקשורת זמנית."
 
         engine = PlaybookEngine(df)
         result = engine.evaluate()
@@ -200,7 +215,7 @@ def analyze_and_format(ticker_symbol: str, user_prompt: str = "") -> str:
         return formatted_reply
     except Exception as e:
         print(f"[Analyze Error] {e}", flush=True)
-        return f"שגיאה בבדיקת {ticker_symbol}."
+        return f"שגיאה בבדיקת {ticker_symbol}. נסה שוב."
 
 def safe_reply(message, text: str):
     if not text:
@@ -269,7 +284,6 @@ def process_incoming_message(message):
     ticker = extract_ticker(user_text)
     
     if not ticker:
-        # כאן הוספנו מילות מפתח קריטיות לשאלות המשך
         follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema"]
         if any(w in normalized for w in follow_up_words):
             if memory_key in USER_LAST_TICKER:
