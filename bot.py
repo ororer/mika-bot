@@ -32,6 +32,7 @@ except Exception as e:
 
 PROCESSED_MESSAGES = deque(maxlen=500)
 USER_LAST_TICKER = {}
+USER_CHAT_HISTORY = {}  # הוספת הזיכרון לניהול שיחות כלליות
 
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
@@ -320,7 +321,23 @@ def process_incoming_message(message):
             clean_text = clean_text.strip()
 
             prompt_text = clean_text if clean_text else normalized
-            reply = get_mentor_chat_reply(prompt_text)
+            
+            # שליפת היסטוריית השיחה מהזיכרון
+            if memory_key not in USER_CHAT_HISTORY:
+                USER_CHAT_HISTORY[memory_key] = []
+            
+            chat_history = USER_CHAT_HISTORY[memory_key]
+            
+            # שליחה ל-AI כולל ההיסטוריה
+            reply = get_mentor_chat_reply(prompt_text, chat_history)
+            
+            # עדכון הזיכרון בהודעה שלך ובתשובה שלו
+            chat_history.append({"role": "user", "text": prompt_text})
+            chat_history.append({"role": "model", "text": reply})
+            
+            # שומרים רק את ה-10 הודעות האחרונות (5 שאלות, 5 תשובות) כדי לא להעמיס את הפרומפט
+            if len(chat_history) > 10:
+                USER_CHAT_HISTORY[memory_key] = chat_history[-10:]
 
         safe_reply(message, reply)
     except Exception as e:
