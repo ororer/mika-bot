@@ -32,7 +32,8 @@ except Exception as e:
 
 PROCESSED_MESSAGES = deque(maxlen=500)
 USER_LAST_TICKER = {}
-USER_CHAT_HISTORY = {}  # הוספת הזיכרון לניהול שיחות כלליות
+USER_CHAT_HISTORY = {}
+USER_LAST_INTERACTION = {}  # שמירת זמן האינטראקציה האחרון עבור מעקב בקבוצות
 
 HEBREW_TICKERS = {
     "טסלה": "TSLA",
@@ -295,7 +296,14 @@ def process_incoming_message(message):
     if ticker:
         USER_LAST_TICKER[memory_key] = {"ticker": ticker, "time": time.time()}
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker:
+    # בדיקה האם יש שיחה שוטפת פעילה עם המשתמש (בתוך חלון של 3 דקות)
+    is_ongoing_conversation = False
+    if memory_key in USER_LAST_INTERACTION:
+        if time.time() - USER_LAST_INTERACTION[memory_key] < 180:
+            is_ongoing_conversation = True
+
+    # סינון קבוצות: מתעלמים רק אם אין שום סיבה להגיב ואין שיחה פתוחה
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker and not is_ongoing_conversation:
         return
 
     print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}'", flush=True)
@@ -322,23 +330,21 @@ def process_incoming_message(message):
 
             prompt_text = clean_text if clean_text else normalized
             
-            # שליפת היסטוריית השיחה מהזיכרון
             if memory_key not in USER_CHAT_HISTORY:
                 USER_CHAT_HISTORY[memory_key] = []
             
             chat_history = USER_CHAT_HISTORY[memory_key]
             
-            # שליחה ל-AI כולל ההיסטוריה
             reply = get_mentor_chat_reply(prompt_text, chat_history)
             
-            # עדכון הזיכרון בהודעה שלך ובתשובה שלו
             chat_history.append({"role": "user", "text": prompt_text})
             chat_history.append({"role": "model", "text": reply})
             
-            # שומרים רק את ה-10 הודעות האחרונות (5 שאלות, 5 תשובות) כדי לא להעמיס את הפרומפט
             if len(chat_history) > 10:
                 USER_CHAT_HISTORY[memory_key] = chat_history[-10:]
 
+        # עדכון חותמת הזמן לאינטראקציה כדי לשמור על חלון השיחה פתוח
+        USER_LAST_INTERACTION[memory_key] = time.time()
         safe_reply(message, reply)
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
