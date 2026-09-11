@@ -1,5 +1,6 @@
 import os
 import time
+import yfinance as yf
 from google import genai
 from google.genai import types
 
@@ -34,6 +35,7 @@ def query_gemini(prompt_text: str, retries: int = 3) -> str:
                 contents=prompt_text,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
+                    temperature=0.7,
                 )
             )
             if response and response.text:
@@ -81,19 +83,52 @@ def get_mentor_chat_reply(user_text: str, history: list = None) -> str:
     if history is None:
         history = []
         
-    # בניית תמליל השיחה האחרונה כדי לתת הקשר ל-AI
     transcript = ""
     if history:
-        transcript += "היסטוריית השיחה עד כה (לצורך הקשר בלבד):\n"
+        transcript += "היסטוריית השיחה הקודמת (לצורך הקשר בלבד):\n"
         for msg in history:
             role = "משתמש" if msg["role"] == "user" else "צ'יפ"
             transcript += f"{role}: {msg['text']}\n"
         transcript += "---\n\n"
         
-    prompt = f"""{transcript}המשתמש פנה אליך בהודעה החדשה הבאה:
+    prompt = f"""{transcript}המשתמש פנה בהודעה הבאה:
 "{user_text}"
 
-ענה לו כמודל AI חכם. התחשב בהקשר השיחה הקודמת במידת הצורך כדי לשמור על עקביות. אם זו שאלה מורכבת, בקשה לקוד או ידע כללי, ענה באריכות ובפירוט הנדרש כמו עוזר וירטואלי מעולה. 
+ענה לו כמודל AI חכם. התחשב בהקשר השיחה הקודמת במידת הצורך כדי לשמור על עקביות ורציפות. אם זו שאלה מורכבת, בקשה לקוד או ידע כללי, ענה באריכות ובפירוט הנדרש כמו עוזר וירטואלי מעולה. 
 רק אם הוא מבקש במפורש ניתוח טכני של מניה ספציפית אבל שכח לציין את שם המניה (טיקר) באנגלית, בקש ממנו להקליד את הטיקר.
 """
     return query_gemini(prompt)
+
+def get_ticker_news_summary(ticker_symbol: str) -> str:
+    """מושך כותרות חדשות אחרונות מיאהו פייננס ומסכם את הקטליסט המרכזי באמצעות ג'מיני"""
+    try:
+        t = yf.Ticker(ticker_symbol)
+        raw_news = getattr(t, 'news', None)
+        if not raw_news:
+            return f"📰 לא נמצאו כותרות חדשות עדכניות עבור {ticker_symbol}."
+
+        headlines = []
+        for item in raw_news[:4]:
+            title = item.get("title")
+            publisher = item.get("publisher", "")
+            if title:
+                headlines.append(f"- {title} ({publisher})")
+
+        if not headlines:
+            return f"📰 לא נמצאו כותרות חדשות מובהקות עבור {ticker_symbol}."
+
+        headlines_text = "\n".join(headlines)
+        prompt = f"""
+להלן הכותרות הכלכליות האחרונות של המניה {ticker_symbol}:
+{headlines_text}
+
+תמצת ב-2 עד 3 משפטים בעברית ברורה:
+1. מהו הקטליסט או האירוע המרכזי שמופיע בחדשות (דוחות, המלצות אנליסטים, חוזה, תביעה וכו')?
+2. האם הנימה הכללית היא חיובית, שלילית או ניטרלית עבור המניה?
+הערה לסוחר: זכור שחדשות הן רק רקע; גרף המחיר והווליום הם שקובעים.
+"""
+        summary = query_gemini(prompt)
+        return f"📰 **מבזק קטליסטים וחדשות ({ticker_symbol}):**\n\n{summary}"
+    except Exception as e:
+        print(f"[News Error] {e}", flush=True)
+        return f"לא ניתן היה לאחזר חדשות עבור {ticker_symbol} כרגע."
