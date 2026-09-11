@@ -1,5 +1,7 @@
 import os
 import time
+import xml.etree.ElementTree as ET
+import requests
 import yfinance as yf
 from google import genai
 from google.genai import types
@@ -99,27 +101,66 @@ def get_mentor_chat_reply(user_text: str, history: list = None) -> str:
 """
     return query_gemini(prompt)
 
-def get_ticker_news_summary(ticker_symbol: str) -> str:
-    """מושך כותרות חדשות אחרונות מיאהו פייננס ומסכם את הקטליסט המרכזי באמצעות ג'מיני"""
+def _fetch_rss_headlines(ticker_symbol: str) -> list:
+    """שליפת כותרות חדשות דרך RSS Feed של Yahoo Finance למניעת חסימות"""
+    headlines = []
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker_symbol.upper()}&region=US&lang=en-US"
     try:
-        t = yf.Ticker(ticker_symbol)
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            root = ET.fromstring(resp.content)
+            for item in root.findall('./channel/item')[:5]:
+                title_elem = item.find('title')
+                if title_elem is not None and title_elem.text:
+                    headlines.append(f"- {title_elem.text.strip()}")
+    except Exception as e:
+        print(f"[RSS Fetch Error] {ticker_symbol}: {e}", flush=True)
+    return headlines
+
+def get_ticker_news_summary(ticker_symbol: str) -> str:
+    """מושך כותרות חדשות ומסכם את הקטליסט המרכזי באמצעות ג'מיני"""
+    headlines = []
+    clean_ticker = ticker_symbol.upper().strip()
+
+    # 1. ניסיון משיכה ישיר דרך yfinance
+    try:
+        t = yf.Ticker(clean_ticker)
         raw_news = getattr(t, 'news', None)
-        if not raw_news:
-            return f"📰 לא נמצאו כותרות חדשות עדכניות עבור {ticker_symbol}."
+        if raw_news and isinstance(raw_news, list):
+            for item in raw_news[:5]:
+                title = None
+                publisher = ""
+                # תמיכה במבנה נתונים חדש וישן של yfinance
+                if isinstance(item, dict):
+                    if "content" in item and isinstance(item["content"], dict):
+                        title = item["content"].get("title")
+                        provider = item["content"].get("provider")
+                        if isinstance(provider, dict):
+                            publisher = provider.get("displayName", "")
+                    else:
+                        title = item.get("title")
+                        publisher = item.get("publisher", "")
 
-        headlines = []
-        for item in raw_news[:4]:
-            title = item.get("title")
-            publisher = item.get("publisher", "")
-            if title:
-                headlines.append(f"- {title} ({publisher})")
+                if title:
+                    pub_str = f" ({publisher})" if publisher else ""
+                    headlines.append(f"- {title.strip()}{pub_str}")
+    except Exception as e:
+        print(f"[yfinance News Error] {clean_ticker}: {e}", flush=True)
 
-        if not headlines:
-            return f"📰 לא נמצאו כותרות חדשות מובהקות עבור {ticker_symbol}."
+    # 2. גיבוי מיידי: משיכה דרך RSS Feed אם yfinance לא החזיר כותרות
+    if not headlines:
+        headlines = _fetch_rss_headlines(clean_ticker)
 
-        headlines_text = "\n".join(headlines)
-        prompt = f"""
-להלן הכותרות הכלכליות האחרונות של המניה {ticker_symbol}:
+    # אם גם בגיבוי אין נתונים
+    if not headlines:
+        return f"📰 לא נמצאו כותרות חדשות עדכניות עבור {clean_ticker}."
+
+    headlines_text = "\n".join(headlines)
+    prompt = f"""
+להלן הכותרות הכלכליות האחרונות של המניה {clean_ticker}:
 {headlines_text}
 
 תמצת ב-2 עד 3 משפטים בעברית ברורה:
@@ -127,8 +168,5 @@ def get_ticker_news_summary(ticker_symbol: str) -> str:
 2. האם הנימה הכללית היא חיובית, שלילית או ניטרלית עבור המניה?
 הערה לסוחר: זכור שחדשות הן רק רקע; גרף המחיר והווליום הם שקובעים.
 """
-        summary = query_gemini(prompt)
-        return f"📰 **מבזק קטליסטים וחדשות ({ticker_symbol}):**\n\n{summary}"
-    except Exception as e:
-        print(f"[News Error] {e}", flush=True)
-        return f"לא ניתן היה לאחזר חדשות עבור {ticker_symbol} כרגע."
+    summary = query_gemini(prompt)
+    return f"📰 **מבזק קטליסטים וחדשות ({clean_ticker}):**\n\n{summary}"
