@@ -10,7 +10,7 @@ import requests
 import yfinance as yf
 from collections import deque
 from engine import PlaybookEngine
-from mentor import get_mentor_analysis, get_mentor_chat_reply
+from mentor import get_mentor_analysis, get_mentor_chat_reply, get_ticker_news_summary
 from db import get_active_trades, get_trade_history
 from smart_money import format_smart_money_summary
 
@@ -69,14 +69,13 @@ IGNORED_WORDS = {
     "STOP", "LOSS", "TARGET", "PRICE", "VIEW", "API", "CODE", "APP", "CHAT",
     "RUN", "USER", "TRUE", "FALSE", "NONE", "INFO", "DATA", "TEST", "RSI",
     "MACD", "EMA", "SMA", "VCP", "ATR", "RVOL", "POST", "JSON", "GET", "WIFI", "USB",
-    "CEO", "FED", "VIP", "TEAM", "HOME", "PLAY", "ZOOM", "SNOW"
+    "CEO", "FED", "VIP", "TEAM", "HOME", "PLAY", "ZOOM", "SNOW", "NEWS"
 }
 
 def clean_memory_leak():
     """מונע זליגת זיכרון על ידי הגבלת כמות המשתמשים הנשמרים ברקע"""
     with memory_lock:
         if len(USER_LAST_INTERACTION) > MAX_MEMORY_USERS:
-            # מחיקת 100 המשתמשים הישנים ביותר כדי לפנות מקום
             sorted_users = sorted(USER_LAST_INTERACTION.items(), key=lambda x: x[1])
             for user, _ in sorted_users[:100]:
                 USER_LAST_INTERACTION.pop(user, None)
@@ -162,7 +161,6 @@ def format_active_trades() -> str:
                 if entry_price > 0:
                     pnl_pct = ((curr_price - entry_price) / entry_price) * 100
             
-            # הגנה מפני חסימת 429 מול יאהו בסריקה המונית
             time.sleep(0.3)
         except Exception as e:
             price_status = " (מחיר היסטורי)"
@@ -197,8 +195,8 @@ def extract_ticker(text: str):
         if re.search(rf'(?<![א-ת]){heb_name}(?![א-ת])', clean_text):
             return ticker
 
-    stock_hints = ["מניה", "מניית", "טיקר", "ניתוח", "שער", "גרף", "סווינג", "לונג", "שורט", "מחיר", "סטופ", "דעתך", "חושב", "קורה", "מצב", "בדוק"]
-    has_hint = any(h in clean_text for h in stock_hints)
+    stock_hints = ["מניה", "מניית", "טיקר", "ניתוח", "שער", "גרף", "סווינג", "לונג", "שורט", "מחיר", "סטופ", "דעתך", "חושב", "קורה", "מצב", "בדוק", "חדשות", "news"]
+    has_hint = any(h in clean_text.lower() for h in stock_hints)
 
     uppercase_candidates = re.findall(r'\b[A-Z]{2,5}\b', text)
     valid_uppercase = [uc for uc in uppercase_candidates if uc not in IGNORED_WORDS]
@@ -206,7 +204,6 @@ def extract_ticker(text: str):
     raw_candidates = re.findall(r'\b[A-Za-z]{1,5}\b', clean_text)
     valid_candidates = [c.upper() for c in raw_candidates if c.upper() not in IGNORED_WORDS]
 
-    # חילוץ קפדני למניעת זיהוי מילים באנגלית כמניות בטעות
     if valid_uppercase:
         if has_hint or len(valid_candidates) == 1:
             return valid_uppercase[0]
@@ -319,12 +316,15 @@ def process_incoming_message(message):
     ]
     is_smart_money = any(cmd in normalized.lower() for cmd in smart_money_triggers)
 
+    # בדיקת פקודת חדשות
+    is_news_query = normalized.lower().startswith("/news") or any(k in normalized.lower() for k in ["חדשות על", "מה החדשות על", "עדכון חדשות"])
+
     ticker = extract_ticker(raw_text)
 
     with memory_lock:
         if not ticker:
-            follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema"]
-            if any(w in normalized for w in follow_up_words):
+            follow_up_words = ["סטופ", "יעד", "קניתי", "קונה", "מוכר", "בפנים", "נכנסתי", "הפסד", "רווח", "ממוצע", "20", "50", "150", "200", "sma", "ema", "חדשות", "news"]
+            if any(w in normalized.lower() for w in follow_up_words):
                 if memory_key in USER_LAST_TICKER:
                     if time.time() - USER_LAST_TICKER[memory_key]["time"] < 300:
                         ticker = USER_LAST_TICKER[memory_key]["ticker"]
@@ -337,7 +337,7 @@ def process_incoming_message(message):
             if time.time() - USER_LAST_INTERACTION[memory_key] < 60:
                 is_ongoing_conversation = True
 
-    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not ticker and not is_ongoing_conversation:
+    if not is_private and not is_reply_to_bot and not is_mentioned and not is_trades_query and not is_smart_money and not is_news_query and not ticker and not is_ongoing_conversation:
         return
 
     print(f"[Incoming Msg] Chat: {chat_id} | Type: {chat_type} | Text: '{user_text}'", flush=True)
@@ -352,6 +352,11 @@ def process_incoming_message(message):
             reply = format_active_trades()
         elif is_smart_money:
             reply = format_smart_money_summary(normalized)
+        elif is_news_query:
+            if ticker:
+                reply = get_ticker_news_summary(ticker)
+            else:
+                reply = "רשום את סימול המניה שתרצה לקבל עליה חדשות (לדוגמה: `/news NVDA` או `חדשות טסלה`)."
         elif ticker:
             reply = analyze_and_format(ticker, user_text)
         else:
@@ -387,7 +392,7 @@ def process_incoming_message(message):
     except Exception as e:
         print(f"[Handler Error] {e}", flush=True)
 
-@bot.message_handler(commands=['trades', 'pelosi', 'smartmoney', 'ackman', 'cathie', 'jensen', 'trump'])
+@bot.message_handler(commands=['trades', 'pelosi', 'smartmoney', 'ackman', 'cathie', 'jensen', 'trump', 'news'])
 def handle_commands(message):
     process_incoming_message(message)
 
